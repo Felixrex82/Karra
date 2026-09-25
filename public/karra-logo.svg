@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" fill="none">
+  <!-- Karra Deep Forest Green Background -->
+  <rect width="240" height="240" rx="48" fill="#086947"/>
+  
+  <!-- Left Vertical Stem (Pill with rounded caps) -->
+  <rect x="52" y="44" width="36" height="152" rx="18" fill="#FFFFFF"/>
+  
+  <!-- Upper Right Leaf / Wing Petal -->
+  <path d="M 94 116 C 94 92 110 52 176 44 C 185 44 190 50 188 58 C 182 92 152 124 94 124 Z" fill="#FFFFFF"/>
+  
+  <!-- Lower Right Leaf / Wing Petal -->
+  <path d="M 94 124 C 152 124 182 156 188 190 C 190 198 185 204 176 204 C 110 196 94 156 94 132 Z" fill="#FFFFFF"/>
+</svg>

@@ -1,0 +1,6 @@
+{
+  "name": "Karra - AI Business Operating System",
+  "description": "Karra: Your Business, Understood. AI-native business operating system for small and informal merchants. Understands natural language, records business events, remembers unit economics, manages customer debts, and explains numbers in plain human language.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

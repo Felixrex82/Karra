@@ -1,0 +1,129 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Registered merchant profile and account information with beta authorization status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Firebase Auth UID matching the user" },
+        "email": { "type": "string", "description": "Email address of the merchant" },
+        "displayName": { "type": "string", "description": "Full name or proprietor name" },
+        "businessName": { "type": "string", "description": "Registered name of the enterprise" },
+        "betaStatus": { "type": "string", "enum": ["active", "suspended", "revoked", "invited"], "description": "Beta access status" },
+        "betaInvitationCode": { "type": "string", "description": "Invitation code used to unlock beta access" },
+        "betaJoinedAt": { "type": "string", "description": "ISO timestamp when beta access was redeemed" },
+        "role": { "type": "string", "enum": ["admin", "merchant"], "description": "Platform permission role" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of registration" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last profile update" }
+      },
+      "required": ["id", "email", "businessName"]
+    },
+    "BusinessData": {
+      "title": "BusinessData",
+      "description": "The merchant's ledger including profile, inventory, events, customers, and suppliers",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Document identifier" },
+        "ownerId": { "type": "string", "description": "Owner UID matching the authenticated merchant" },
+        "businessName": { "type": "string", "description": "Business trade name" },
+        "ownerName": { "type": "string", "description": "Owner or proprietor name" },
+        "currency": { "type": "string", "description": "Store functional currency (e.g. NGN)" },
+        "profile": { "type": "object", "description": "Structured business operating profile" },
+        "products": { "type": "array", "description": "Inventory product catalog" },
+        "events": { "type": "array", "description": "Daily double-entry ledger events" },
+        "customers": { "type": "array", "description": "Customer debtors and receivables" },
+        "suppliers": { "type": "array", "description": "Supplier payables and catalog" },
+        "unitRelationships": { "type": "array", "description": "Configured unit economic conversions" },
+        "rules": { "type": "array", "description": "Active business memory and operational rules" },
+        "categories": { "type": "array", "description": "Active business operating categories" },
+        "updatedAt": { "type": "string", "description": "ISO timestamp of last cloud sync" }
+      },
+      "required": ["id", "ownerId", "businessName", "updatedAt"]
+    },
+    "BetaInvitation": {
+      "title": "BetaInvitation",
+      "description": "Private beta invitation credential model",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Unique invitation identifier" },
+        "code": { "type": "string", "description": "Unique cryptographic invitation code" },
+        "status": { "type": "string", "enum": ["active", "redeemed", "revoked", "expired"], "description": "Invitation state" },
+        "maxUses": { "type": "number", "description": "Maximum allowed redemptions (default 1)" },
+        "currentUses": { "type": "number", "description": "Number of times redeemed" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of creation" },
+        "expiresAt": { "type": "string", "description": "ISO timestamp of expiry (optional)" },
+        "createdBy": { "type": "string", "description": "Email or UID of admin creator" },
+        "notes": { "type": "string", "description": "Merchant or cohort label" },
+        "redeemedAt": { "type": "string", "description": "ISO timestamp of last redemption" }
+      },
+      "required": ["id", "code", "status", "maxUses", "currentUses", "createdAt"]
+    },
+    "BetaFeedback": {
+      "title": "BetaFeedback",
+      "description": "Beta user issue report and feedback submission",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Feedback identifier" },
+        "userId": { "type": "string", "description": "UID of submitting merchant" },
+        "userEmail": { "type": "string", "description": "Email of submitting merchant" },
+        "businessName": { "type": "string", "description": "Business trade name" },
+        "type": { "type": "string", "description": "Feedback category (bug, confusing, missing_feature, wrong_calculation, ai_problem, ui_problem, general)" },
+        "message": { "type": "string", "description": "User feedback narrative" },
+        "context": { "type": "object", "description": "Page and technical state context" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of submission" },
+        "status": { "type": "string", "description": "Review status" }
+      },
+      "required": ["id", "userId", "type", "message", "createdAt"]
+    },
+    "BetaEvent": {
+      "title": "BetaEvent",
+      "description": "Lightweight beta product usage event",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Event identifier" },
+        "userId": { "type": "string", "description": "Merchant UID" },
+        "eventName": { "type": "string", "description": "Standardized event name" },
+        "timestamp": { "type": "string", "description": "ISO timestamp of event" },
+        "metadata": { "type": "object", "description": "Event parameters" }
+      },
+      "required": ["id", "userId", "eventName", "timestamp"]
+    },
+    "BetaAccessRequest": {
+      "title": "BetaAccessRequest",
+      "description": "Public prospective beta tester waitlist / access request",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Request identifier" },
+        "fullName": { "type": "string", "description": "Applicant full name" },
+        "businessName": { "type": "string", "description": "Applicant business name" },
+        "phone": { "type": "string", "description": "Contact phone or WhatsApp" },
+        "email": { "type": "string", "description": "Contact email" },
+        "notes": { "type": "string", "description": "Business description or comment" },
+        "createdAt": { "type": "string", "description": "ISO timestamp of request" }
+      },
+      "required": ["id", "fullName", "businessName", "email", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profile document restricted to the authenticated merchant with betaStatus validation"
+    },
+    "/users/{userId}/data/{docId}": {
+      "schema": "BusinessData",
+      "description": "Business ledger documents accessible only to beta-authorized merchants"
+    },
+    "/beta_feedback/{feedbackId}": {
+      "schema": "BetaFeedback",
+      "description": "Feedback and bug reports submitted by beta merchants"
+    },
+    "/beta_events/{eventId}": {
+      "schema": "BetaEvent",
+      "description": "Lightweight product analytics events"
+    },
+    "/beta_access_requests/{requestId}": {
+      "schema": "BetaAccessRequest",
+      "description": "Prospective beta tester access requests submitted from the landing screen"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+
+# Environment variables & secrets
+.env
+.env*
+.env.local
+.env.*.local
+!.env.example
+
+# Local runtime databases & persistent storage
+data/
+*.sqlite
+*.db
+*.sqlite3
+
+# Credentials & private keys
+credentials/
+*.key
+*.pem
+*.cert

@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Default-deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Platform Founder & Admin verification
+    function isAdmin() {
+      return isSignedIn() && (
+        ('email' in request.auth.token && request.auth.token.email.lower() == 'olamidefelix54@gmail.com') ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Connection health check
+    match /test/{docId} {
+      allow get: if true;
+    }
+
+    // User profile: restricted to the merchant owner, viewable/manageable by admin
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if (isOwner(userId) && request.resource.data.get('role', 'merchant') != 'admin') || isAdmin();
+      allow update: if (isOwner(userId) && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['role']) || request.resource.data.role != 'admin')) || isAdmin();
+      allow delete: if isOwner(userId) || isAdmin();
+
+      // Merchant financial ledger & state data: isolated to the merchant owner
+      match /data/{docId} {
+        allow get, list: if isOwner(userId) || isAdmin();
+        allow create, update: if (isOwner(userId) || isAdmin()) && isValidId(docId);
+        allow delete: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    // Beta Feedback & Problem Reports
+    match /beta_feedback/{feedbackId} {
+      allow create: if isSignedIn()
+                    && isValidId(feedbackId)
+                    && request.resource.data.userId == request.auth.uid;
+      allow get, list, update, delete: if isAdmin();
+    }
+
+    // Beta Usage Analytics Events
+    match /beta_events/{eventId} {
+      allow create: if isSignedIn()
+                    && isValidId(eventId)
+                    && request.resource.data.userId == request.auth.uid;
+      allow get, list, update, delete: if isAdmin();
+    }
+
+    // Beta Waitlist / Access Requests (submitted by unauthenticated landing page visitors)
+    match /beta_access_requests/{requestId} {
+      allow create: if isValidId(requestId)
+                    && request.resource.data.email is string
+                    && request.resource.data.fullName is string
+                    && request.resource.data.businessName is string;
+      allow get, list, update, delete: if isAdmin();
+    }
+
+    // Invitation records: Strictly blocked from direct client read/write (Server Managed Only)
+    match /beta_invitations/{invitationId} {
+      allow read, write: if false;
+    }
+
+    // Admins registry
+    match /admins/{adminId} {
+      allow read, write: if isAdmin();
+    }
+  }
+}
+
