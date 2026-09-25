@@ -30,42 +30,92 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json());
 
-// In-memory active admin sessions: token -> { email: string; expiresAt: number }
+// Stateless HMAC-SHA256 signed session token generator & validator for serverless (Vercel) & traditional environments
 const activeAdminSessions = new Map<string, { email: string; expiresAt: number }>();
 
+function getSigningKey(): string {
+  const secret = (process.env.ADMIN_SECRET || '').trim();
+  if (secret) return secret;
+  const password = (process.env.ADMIN_PASSWORD || '').trim().replace(/^["']|["']$/g, '');
+  if (password) return password;
+  return 'karra-platform-founder-auth-salt';
+}
+
 export function createAdminSession(email: string): string {
-  const token = `karra_adm_${crypto.randomBytes(24).toString('hex')}`;
   const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+  const payload = {
+    email: email.trim().toLowerCase(),
+    exp: expiresAt,
+    nonce: crypto.randomBytes(8).toString('hex'),
+  };
+  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signature = crypto
+    .createHmac('sha256', getSigningKey())
+    .update(payloadB64)
+    .digest('base64url');
+
+  const token = `karra_tok_${payloadB64}.${signature}`;
   activeAdminSessions.set(token, { email, expiresAt });
   return token;
 }
 
 export function isValidAdminSession(token: string, email?: string): boolean {
   if (!token) return false;
+  const trimmedToken = token.trim();
 
-  // Check programmatic ADMIN_SECRET env var if configured
+  // 1. Check programmatic ADMIN_SECRET env var if configured
   const envSecret = process.env.ADMIN_SECRET;
-  if (envSecret && token.trim() === envSecret.trim()) {
+  if (envSecret && trimmedToken === envSecret.trim()) {
     if (email && email.trim().toLowerCase() !== FOUNDER_EMAIL.toLowerCase()) {
       return false;
     }
     return true;
   }
 
-  // Check active admin session map
-  const session = activeAdminSessions.get(token.trim());
-  if (!session) return false;
+  // 2. Check stateless signed HMAC token (works across serverless lambda instances on Vercel)
+  if (trimmedToken.startsWith('karra_tok_')) {
+    try {
+      const tokenBody = trimmedToken.slice('karra_tok_'.length);
+      const [payloadB64, signature] = tokenBody.split('.');
+      if (payloadB64 && signature) {
+        const expectedSig = crypto
+          .createHmac('sha256', getSigningKey())
+          .update(payloadB64)
+          .digest('base64url');
 
-  if (Date.now() > session.expiresAt) {
-    activeAdminSessions.delete(token.trim());
-    return false;
+        const sigBuf = Buffer.from(signature);
+        const expectedBuf = Buffer.from(expectedSig);
+        if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
+          const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+          if (payload && payload.exp && Date.now() < payload.exp) {
+            const tokenEmail = (payload.email || '').trim().toLowerCase();
+            if (tokenEmail === FOUNDER_EMAIL.toLowerCase()) {
+              if (!email || email.trim().toLowerCase() === FOUNDER_EMAIL.toLowerCase()) {
+                return true;
+              }
+            }
+          }
+        }
+      }
+    } catch {
+      // Fall through to memory check
+    }
   }
 
-  if (email && email.trim().toLowerCase() !== session.email.toLowerCase()) {
-    return false;
+  // 3. Fallback to active in-memory session map (for local dev)
+  const session = activeAdminSessions.get(trimmedToken);
+  if (session) {
+    if (Date.now() > session.expiresAt) {
+      activeAdminSessions.delete(trimmedToken);
+      return false;
+    }
+    if (email && email.trim().toLowerCase() !== session.email.toLowerCase()) {
+      return false;
+    }
+    return true;
   }
 
-  return true;
+  return false;
 }
 
 /**
@@ -294,25 +344,38 @@ const handleAdminLogin = (req: express.Request, res: express.Response) => {
     return;
   }
 
-  const { email, password } = req.body;
-  const normalizedEmail = (email || '').trim().toLowerCase();
-  const trimmedPassword = (password || '').trim();
+  let body = req.body;
+  if (typeof body === 'string') {
+    try {
+      body = JSON.parse(body);
+    } catch {}
+  }
 
-  const expectedAdminPassword = process.env.ADMIN_PASSWORD;
+  const rawEmail = body?.email || '';
+  const rawPass = body?.password || '';
+  const normalizedEmail = (rawEmail || '').trim().toLowerCase();
+  const trimmedPassword = (rawPass || '').trim();
 
-  if (!expectedAdminPassword) {
+  const rawExpectedPassword = (process.env.ADMIN_PASSWORD || '').trim();
+  // Strip surrounding quotes if user copied "@Felixrex1" with quotes into Vercel UI
+  const cleanExpectedPassword = rawExpectedPassword.replace(/^["']|["']$/g, '').trim();
+
+  if (!cleanExpectedPassword && !rawExpectedPassword) {
     res.status(500).json({
       success: false,
-      error: 'Admin authentication is not configured on this server. Please configure ADMIN_PASSWORD.',
+      error: 'Admin authentication is not configured on this server. Please ensure ADMIN_PASSWORD is added to your Vercel Environment Variables and that the project has been redeployed.',
     });
     return;
   }
 
   const isEmailValid = normalizedEmail === FOUNDER_EMAIL.toLowerCase();
-  const isPasswordValid = trimmedPassword === expectedAdminPassword;
+  const isPasswordValid = Boolean(
+    (cleanExpectedPassword && trimmedPassword === cleanExpectedPassword) ||
+    (rawExpectedPassword && trimmedPassword === rawExpectedPassword)
+  );
 
   if (isEmailValid && isPasswordValid) {
-    // Generate an ephemeral, cryptographically secure admin session token
+    // Generate an ephemeral, cryptographically secure stateless HMAC admin session token
     const sessionToken = createAdminSession(normalizedEmail);
     res.json({
       success: true,
@@ -329,13 +392,16 @@ const handleAdminLogin = (req: express.Request, res: express.Response) => {
   }
 };
 
-app.post(['/api/admin/login', '/api/beta/admin/login'], handleAdminLogin);
+app.post(
+  ['/api/admin/login', '/api/beta/admin/login', '/admin/login', '/beta/admin/login'],
+  handleAdminLogin
+);
 
 // Dedicated Admin Router: Every route on this router strictly executes requireAdmin
 const adminRouter = express.Router();
 adminRouter.use(requireAdmin);
 
-adminRouter.get('/verify', (req, res) => {
+adminRouter.get(['/verify', '/api/verify'], (req, res) => {
   res.json({ success: true, authorized: true, role: 'admin', email: FOUNDER_EMAIL });
 });
 
@@ -391,9 +457,8 @@ adminRouter.get('/analytics', (req, res) => {
   res.json({ analytics: getBetaAnalytics() });
 });
 
-// Protect all admin endpoints under both /api/admin and /api/beta/admin
-app.use('/api/admin', adminRouter);
-app.use('/api/beta/admin', adminRouter);
+// Protect all admin endpoints under /api/admin, /admin, /api/beta/admin, /beta/admin
+app.use(['/api/admin', '/api/beta/admin', '/admin', '/beta/admin'], adminRouter);
 
 
 // API endpoint: Interpret natural language statement into structured business event or query
