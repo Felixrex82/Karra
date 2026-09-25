@@ -71,6 +71,9 @@ export const BetaAdminModal: React.FC<BetaAdminModalProps> = ({
 
   const safeFetchJson = async (url: string, options: RequestInit = {}) => {
     try {
+      const secret = getAdminSecret();
+      if (!secret) return null;
+
       const headers = {
         ...getAdminHeaders(),
         ...(options.headers || {}),
@@ -79,6 +82,9 @@ export const BetaAdminModal: React.FC<BetaAdminModalProps> = ({
         ...options,
         headers,
       });
+      if (res.status === 401 || res.status === 403) {
+        return null;
+      }
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
         console.warn(`Non-JSON response from ${url}: status ${res.status}`);

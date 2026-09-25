@@ -32,7 +32,9 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
   const { user, signInAsFounder, signIn } = useAuth();
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
     try {
-      return sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+      const token = sessionStorage.getItem('karra_admin_token');
+      const isAuth = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+      return Boolean(token && isAuth);
     } catch {
       return false;
     }
@@ -44,14 +46,45 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Check if session is already authenticated
+  // Validate stored session with backend upon mount
   useEffect(() => {
     try {
+      const token = sessionStorage.getItem('karra_admin_token');
       const isAuth = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
-      if (isAuth) {
-        setIsAdminAuthenticated(true);
+      if (!token || !isAuth) {
+        setIsAdminAuthenticated(false);
+        return;
       }
-    } catch {}
+
+      // Query server verification endpoint
+      fetch('/api/admin/verify', {
+        headers: {
+          'x-admin-secret': token,
+          'Authorization': `Bearer ${token}`,
+          'x-admin-email': FOUNDER_EMAIL,
+        },
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error('Unauthorized');
+          return res.json();
+        })
+        .then((data) => {
+          if (data.authorized) {
+            setIsAdminAuthenticated(true);
+          } else {
+            throw new Error('Not authorized');
+          }
+        })
+        .catch(() => {
+          try {
+            sessionStorage.removeItem(ADMIN_SESSION_KEY);
+            sessionStorage.removeItem('karra_admin_token');
+          } catch {}
+          setIsAdminAuthenticated(false);
+        });
+    } catch {
+      setIsAdminAuthenticated(false);
+    }
   }, []);
 
   const handleAdminLogin = async (e: React.FormEvent) => {
@@ -273,6 +306,7 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
           <div className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
             <AdminDashboardView
               onShowToast={onShowToast}
+              onUnauthorized={handleAdminSignOut}
               onNavigateTab={(tab) => {
                 if (tab === 'dashboard' || tab === 'profile') {
                   onExitAdmin();

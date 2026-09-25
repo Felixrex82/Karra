@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
@@ -29,32 +30,62 @@ const PORT = 3000;
 
 app.use(express.json());
 
+// In-memory active admin sessions: token -> { email: string; expiresAt: number }
+const activeAdminSessions = new Map<string, { email: string; expiresAt: number }>();
+
+export function createAdminSession(email: string): string {
+  const token = `karra_adm_${crypto.randomBytes(24).toString('hex')}`;
+  const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+  activeAdminSessions.set(token, { email, expiresAt });
+  return token;
+}
+
+export function isValidAdminSession(token: string, email?: string): boolean {
+  if (!token) return false;
+
+  // Check programmatic ADMIN_SECRET env var if configured
+  const envSecret = process.env.ADMIN_SECRET;
+  if (envSecret && token.trim() === envSecret.trim()) {
+    if (email && email.trim().toLowerCase() !== FOUNDER_EMAIL.toLowerCase()) {
+      return false;
+    }
+    return true;
+  }
+
+  // Check active admin session map
+  const session = activeAdminSessions.get(token.trim());
+  if (!session) return false;
+
+  if (Date.now() > session.expiresAt) {
+    activeAdminSessions.delete(token.trim());
+    return false;
+  }
+
+  if (email && email.trim().toLowerCase() !== session.email.toLowerCase()) {
+    return false;
+  }
+
+  return true;
+}
+
 /**
- * Admin authorization middleware - strictly requires valid admin secret token
+ * Admin authorization middleware - strictly requires valid admin session token
  */
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   const authHeader = (req.headers['authorization'] as string) || '';
   const adminSecret = (req.headers['x-admin-secret'] as string) || (authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '');
   const adminEmail = (req.headers['x-admin-email'] as string) || '';
-  const expectedSecret = process.env.ADMIN_SECRET;
 
-  if (!expectedSecret) {
-    res.status(500).json({ error: 'Server configuration error: ADMIN_SECRET not configured.' });
+  if (!isValidAdminSession(adminSecret, adminEmail)) {
+    res.status(403).json({
+      error: 'Access denied. Valid Founder/Admin credentials required.',
+    });
     return;
   }
 
-  const hasSecret = Boolean(adminSecret && adminSecret.trim() === expectedSecret);
-  const isFounderEmail = adminEmail ? adminEmail.trim().toLowerCase() === FOUNDER_EMAIL.toLowerCase() : true;
-
-  // Strict check: valid secret token is MANDATORY, and email must not be non-founder
-  if (hasSecret && isFounderEmail) {
-    return next();
-  }
-
-  res.status(403).json({
-    error: 'Access denied. Valid Founder/Admin credentials required.',
-  });
+  return next();
 }
+
 
 // Lazy-initialized Gemini client
 let genAIClient: GoogleGenAI | null = null;
@@ -176,8 +207,14 @@ app.post('/api/beta/redeem-code', (req, res) => {
 app.get('/api/beta/status', (req, res) => {
   const userId = (req.query.userId as string) || (req.headers['x-user-id'] as string) || '';
   const userEmail = (req.query.userEmail as string) || (req.headers['x-user-email'] as string) || '';
+  const authHeader = (req.headers['authorization'] as string) || '';
+  const adminSecret = (req.headers['x-admin-secret'] as string) || (authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '');
 
   const status = getUserBetaStatus(userId, userEmail);
+  // Strictly ensure role: 'admin' is only returned when caller has a verified admin session
+  if (status.role === 'admin' && !isValidAdminSession(adminSecret, userEmail)) {
+    status.role = 'merchant';
+  }
   res.json(status);
 });
 
@@ -245,7 +282,7 @@ app.post('/api/beta/track-event', (req, res) => {
 // =========================================================================
 
 // Explicit admin login endpoint verifying email and designated founder password with brute-force rate limit
-app.post('/api/admin/login', (req, res) => {
+const handleAdminLogin = (req: express.Request, res: express.Response) => {
   const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
   const rateLimit = checkRateLimit(`admin_login_${clientIp}`, 8, 15 * 60 * 1000); // 8 attempts per 15 mins
   if (!rateLimit.allowed) {
@@ -262,12 +299,11 @@ app.post('/api/admin/login', (req, res) => {
   const trimmedPassword = (password || '').trim();
 
   const expectedAdminPassword = process.env.ADMIN_PASSWORD;
-  const adminSecret = process.env.ADMIN_SECRET;
 
-  if (!expectedAdminPassword || !adminSecret) {
+  if (!expectedAdminPassword) {
     res.status(500).json({
       success: false,
-      error: 'Admin authentication is not configured on this server. Please configure ADMIN_PASSWORD and ADMIN_SECRET.',
+      error: 'Admin authentication is not configured on this server. Please configure ADMIN_PASSWORD.',
     });
     return;
   }
@@ -276,9 +312,11 @@ app.post('/api/admin/login', (req, res) => {
   const isPasswordValid = trimmedPassword === expectedAdminPassword;
 
   if (isEmailValid && isPasswordValid) {
+    // Generate an ephemeral, cryptographically secure admin session token
+    const sessionToken = createAdminSession(normalizedEmail);
     res.json({
       success: true,
-      token: adminSecret,
+      token: sessionToken,
       email: normalizedEmail,
       role: 'admin',
       message: 'Founder admin authentication verified.',
@@ -289,13 +327,23 @@ app.post('/api/admin/login', (req, res) => {
       error: 'Invalid founder admin credentials. Access denied.',
     });
   }
+};
+
+app.post(['/api/admin/login', '/api/beta/admin/login'], handleAdminLogin);
+
+// Dedicated Admin Router: Every route on this router strictly executes requireAdmin
+const adminRouter = express.Router();
+adminRouter.use(requireAdmin);
+
+adminRouter.get('/verify', (req, res) => {
+  res.json({ success: true, authorized: true, role: 'admin', email: FOUNDER_EMAIL });
 });
 
-app.get('/api/admin/invitations', requireAdmin, (req, res) => {
+adminRouter.get('/invitations', (req, res) => {
   res.json({ invitations: listInvitations() });
 });
 
-app.post('/api/admin/invitations/create', requireAdmin, (req, res) => {
+adminRouter.post('/invitations/create', (req, res) => {
   const { maxUses, notes, expiresAt, customCode } = req.body;
   const invitation = createInvitation({
     maxUses: Number(maxUses) || 1,
@@ -307,7 +355,7 @@ app.post('/api/admin/invitations/create', requireAdmin, (req, res) => {
   res.json({ success: true, invitation });
 });
 
-app.post('/api/admin/invitations/revoke', requireAdmin, (req, res) => {
+adminRouter.post('/invitations/revoke', (req, res) => {
   const { code } = req.body;
   if (!code) {
     res.status(400).json({ error: 'code is required.' });
@@ -317,11 +365,11 @@ app.post('/api/admin/invitations/revoke', requireAdmin, (req, res) => {
   res.json({ success: ok });
 });
 
-app.get('/api/admin/users', requireAdmin, (req, res) => {
+adminRouter.get('/users', (req, res) => {
   res.json({ users: listUsers() });
 });
 
-app.post('/api/admin/users/status', requireAdmin, (req, res) => {
+adminRouter.post('/users/status', (req, res) => {
   const { userId, status } = req.body;
   if (!userId || !['active', 'suspended', 'revoked'].includes(status)) {
     res.status(400).json({ error: 'Valid userId and status (active, suspended, revoked) are required.' });
@@ -331,17 +379,22 @@ app.post('/api/admin/users/status', requireAdmin, (req, res) => {
   res.json({ success: ok });
 });
 
-app.get('/api/admin/feedback', requireAdmin, (req, res) => {
+adminRouter.get('/feedback', (req, res) => {
   res.json({ feedback: listFeedback() });
 });
 
-app.get(['/api/admin/requests', '/api/admin/access-requests'], requireAdmin, (req, res) => {
+adminRouter.get(['/requests', '/access-requests'], (req, res) => {
   res.json({ requests: listRequests() });
 });
 
-app.get('/api/admin/analytics', requireAdmin, (req, res) => {
+adminRouter.get('/analytics', (req, res) => {
   res.json({ analytics: getBetaAnalytics() });
 });
+
+// Protect all admin endpoints under both /api/admin and /api/beta/admin
+app.use('/api/admin', adminRouter);
+app.use('/api/beta/admin', adminRouter);
+
 
 // API endpoint: Interpret natural language statement into structured business event or query
 app.post('/api/gemini/interpret', async (req, res) => {

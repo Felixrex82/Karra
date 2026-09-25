@@ -30,12 +30,15 @@ import { BetaInvitation, BetaFeedbackItem, BetaAccessRequest, BetaAnalytics } fr
 interface AdminDashboardViewProps {
   onShowToast?: (message: string, type?: 'success' | 'info' | 'warning') => void;
   onNavigateTab?: (tab: string) => void;
+  onUnauthorized?: () => void;
 }
 
 export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onShowToast,
   onNavigateTab,
+  onUnauthorized,
 }) => {
+
   const { user } = useAuth();
   const [activeSubTab, setActiveSubTab] = useState<'overview' | 'invitations' | 'requests' | 'users' | 'feedback'>('overview');
 
@@ -74,6 +77,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   const safeFetchJson = async (url: string, options: RequestInit = {}) => {
     try {
+      const secret = getAdminSecret();
+      if (!secret) {
+        onUnauthorized?.();
+        return null;
+      }
+
       const headers = {
         ...getAdminHeaders(),
         ...(options.headers || {}),
@@ -82,6 +91,12 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         ...options,
         headers,
       });
+
+      if (res.status === 401 || res.status === 403) {
+        onUnauthorized?.();
+        return null;
+      }
+
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
         console.warn(`Non-JSON response from ${url}: status ${res.status}`);
