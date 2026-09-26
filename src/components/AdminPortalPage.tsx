@@ -118,7 +118,11 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok || !data.success) {
-        setErrorMessage(data.error || 'Access denied: Invalid admin credentials.');
+        if (res.status === 404) {
+          setErrorMessage('Admin API endpoint could not be reached (404). Please ensure the latest Vercel deployment has finished.');
+        } else {
+          setErrorMessage(data?.error || `Access denied (${res.status}): Invalid admin credentials.`);
+        }
         setIsSubmitting(false);
         return;
       }

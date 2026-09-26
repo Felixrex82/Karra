@@ -30,6 +30,19 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.use(express.json());
 
+// Support Vercel Serverless Function invocations, query rewrites, and reverse proxy forwarding
+app.use((req, res, next) => {
+  const matchedPath =
+    (req.headers['x-matched-path'] as string) ||
+    (req.headers['x-invoke-path'] as string) ||
+    (req.headers['x-forwarded-url'] as string);
+
+  if (matchedPath && (matchedPath.startsWith('/api') || matchedPath.startsWith('/admin') || matchedPath.startsWith('/beta'))) {
+    req.url = matchedPath.split('?')[0];
+  }
+  next();
+});
+
 // Stateless HMAC-SHA256 signed session token generator & validator for serverless (Vercel) & traditional environments
 const activeAdminSessions = new Map<string, { email: string; expiresAt: number }>();
 
@@ -63,9 +76,10 @@ export function isValidAdminSession(token: string, email?: string): boolean {
   if (!token) return false;
   const trimmedToken = token.trim();
 
-  // 1. Check programmatic ADMIN_SECRET env var if configured
-  const envSecret = process.env.ADMIN_SECRET;
-  if (envSecret && trimmedToken === envSecret.trim()) {
+  // 1. Check programmatic ADMIN_SECRET or ADMIN_PASSWORD env var if configured
+  const envSecret = (process.env.ADMIN_SECRET || '').trim();
+  const envPassword = (process.env.ADMIN_PASSWORD || '').trim().replace(/^["']|["']$/g, '');
+  if ((envSecret && trimmedToken === envSecret) || (envPassword && trimmedToken === envPassword)) {
     if (email && email.trim().toLowerCase() !== FOUNDER_EMAIL.toLowerCase()) {
       return false;
     }
@@ -355,23 +369,29 @@ const handleAdminLogin = (req: express.Request, res: express.Response) => {
   const rawPass = body?.password || '';
   const normalizedEmail = (rawEmail || '').trim().toLowerCase();
   const trimmedPassword = (rawPass || '').trim();
+  const cleanEnteredPassword = trimmedPassword.replace(/^["']|["']$/g, '').trim();
 
-  const rawExpectedPassword = (process.env.ADMIN_PASSWORD || '').trim();
+  const rawExpectedPassword = (process.env.ADMIN_PASSWORD || process.env.ADMIN_SECRET || '').trim();
   // Strip surrounding quotes if user copied "@Felixrex1" with quotes into Vercel UI
   const cleanExpectedPassword = rawExpectedPassword.replace(/^["']|["']$/g, '').trim();
 
   if (!cleanExpectedPassword && !rawExpectedPassword) {
     res.status(500).json({
       success: false,
-      error: 'Admin authentication is not configured on this server. Please ensure ADMIN_PASSWORD is added to your Vercel Environment Variables and that the project has been redeployed.',
+      error: 'ADMIN_PASSWORD environment variable is not detected by the serverless function. In your Vercel Project Settings > Environment Variables, confirm ADMIN_PASSWORD is set for Production & Preview, then go to Deployments and trigger "Redeploy" so the variables are baked into active lambda instances.',
     });
     return;
   }
 
-  const isEmailValid = normalizedEmail === FOUNDER_EMAIL.toLowerCase();
+  const configuredAdminEmail = (process.env.ADMIN_EMAIL || FOUNDER_EMAIL).trim().toLowerCase();
+  const isEmailValid = normalizedEmail === FOUNDER_EMAIL.toLowerCase() || normalizedEmail === configuredAdminEmail;
   const isPasswordValid = Boolean(
     (cleanExpectedPassword && trimmedPassword === cleanExpectedPassword) ||
-    (rawExpectedPassword && trimmedPassword === rawExpectedPassword)
+    (rawExpectedPassword && trimmedPassword === rawExpectedPassword) ||
+    (cleanExpectedPassword && cleanEnteredPassword === cleanExpectedPassword) ||
+    (rawExpectedPassword && cleanEnteredPassword === rawExpectedPassword) ||
+    (cleanExpectedPassword && rawPass === cleanExpectedPassword) ||
+    (rawExpectedPassword && rawPass === rawExpectedPassword)
   );
 
   if (isEmailValid && isPasswordValid) {
