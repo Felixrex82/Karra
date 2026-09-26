@@ -127,6 +127,10 @@ export function formatAuthErrorMessage(error: any): string {
   if (code === 'auth/operation-not-allowed' || msg.includes('auth/operation-not-allowed') || msg.includes('operation-not-allowed')) {
     return 'Email/Password sign-in is not yet enabled in the Firebase Console for this project. Please sign in with Google (recommended) or enable Email/Password under Authentication > Sign-in method in your Firebase Console.';
   }
+  if (code === 'auth/unauthorized-domain' || msg.includes('auth/unauthorized-domain') || msg.includes('unauthorized-domain')) {
+    const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'your-domain.vercel.app';
+    return `Google Sign-in domain unauthorized (${currentHost}). To authorize: Go to Firebase Console > Authentication > Settings > Authorized domains, and add "${currentHost}". Meanwhile, sign in with Email & Password or use the Admin Portal.`;
+  }
   switch (code) {
     case 'auth/invalid-email':
       return 'The email address is invalid. Please check and retype.';

@@ -1,7 +1,6 @@
 import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
-import { createServer as createViteServer } from 'vite';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type } from '@google/genai';
 import {
@@ -39,6 +38,12 @@ app.use((req, res, next) => {
 
   if (matchedPath && (matchedPath.startsWith('/api') || matchedPath.startsWith('/admin') || matchedPath.startsWith('/beta'))) {
     req.url = matchedPath.split('?')[0];
+  } else if (req.headers['x-now-route-matches']) {
+    const rawMatches = req.headers['x-now-route-matches'] as string;
+    const match = rawMatches.match(/1=([^&]+)/);
+    if (match && match[1]) {
+      req.url = '/api/' + decodeURIComponent(match[1]);
+    }
   }
   next();
 });
@@ -413,7 +418,7 @@ const handleAdminLogin = (req: express.Request, res: express.Response) => {
 };
 
 app.post(
-  ['/api/admin/login', '/api/beta/admin/login', '/admin/login', '/beta/admin/login'],
+  ['/api/admin/login', '/api/beta/admin/login', '/admin/login', '/beta/admin/login', '/'],
   handleAdminLogin
 );
 
@@ -421,7 +426,7 @@ app.post(
 const adminRouter = express.Router();
 adminRouter.use(requireAdmin);
 
-adminRouter.get(['/verify', '/api/verify'], (req, res) => {
+adminRouter.get(['/', '/verify', '/api/verify'], (req, res) => {
   res.json({ success: true, authorized: true, role: 'admin', email: FOUNDER_EMAIL });
 });
 
@@ -858,6 +863,7 @@ app.all('/api/*', (req, res) => {
 async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: 'spa',
