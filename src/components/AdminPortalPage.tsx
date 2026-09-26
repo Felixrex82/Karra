@@ -115,11 +115,18 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
         body: JSON.stringify({ email: normalizedEmail, password: trimmedPass }),
       });
 
-      const data = await res.json().catch(() => ({}));
+      let data: any = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
 
       if (!res.ok || !data.success) {
         if (res.status === 404) {
           setErrorMessage('Admin API endpoint could not be reached (404). Please ensure the latest Vercel deployment has finished.');
+        } else if (res.status === 500 && !data?.error) {
+          setErrorMessage('Server error (500): ADMIN_PASSWORD environment variable may not be set in Vercel. Ensure it is added in Vercel Project Settings > Environment Variables and redeploy.');
         } else {
           setErrorMessage(data?.error || `Access denied (${res.status}): Invalid admin credentials.`);
         }
