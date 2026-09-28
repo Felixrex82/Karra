@@ -150,6 +150,19 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       const serverInvs: BetaInvitation[] = invData?.invitations || [];
       const codeMap = new Map<string, BetaInvitation>();
       [...localInvs, ...serverInvs].forEach(inv => codeMap.set(inv.code, inv));
+
+      if (codeMap.size === 0) {
+        const seedInvs: BetaInvitation[] = [
+          { id: 'inv_1', code: 'KARRA-ALAB-8821', status: 'active', maxUses: 1, currentUses: 0, createdAt: new Date().toISOString(), expiresAt: null, createdBy: 'olamidefelix54@gmail.com', notes: 'Private Beta Tester 1 (Alaba Electronics)', usedBy: [], redeemedAt: null },
+          { id: 'inv_2', code: 'KARRA-LEKK-3914', status: 'active', maxUses: 1, currentUses: 0, createdAt: new Date().toISOString(), expiresAt: null, createdBy: 'olamidefelix54@gmail.com', notes: 'Private Beta Tester 2 (Lekki Boutique)', usedBy: [], redeemedAt: null },
+          { id: 'inv_3', code: 'KARRA-YABA-7720', status: 'active', maxUses: 1, currentUses: 0, createdAt: new Date().toISOString(), expiresAt: null, createdBy: 'olamidefelix54@gmail.com', notes: 'Private Beta Tester 3 (Yaba Wholesale Provision)', usedBy: [], redeemedAt: null },
+          { id: 'inv_4', code: 'KARRA-IKEJ-5519', status: 'active', maxUses: 1, currentUses: 0, createdAt: new Date().toISOString(), expiresAt: null, createdBy: 'olamidefelix54@gmail.com', notes: 'Private Beta Tester 4 (Ikeja Computer Village)', usedBy: [], redeemedAt: null },
+          { id: 'inv_5', code: 'KARRA-SURL-9943', status: 'active', maxUses: 1, currentUses: 0, createdAt: new Date().toISOString(), expiresAt: null, createdBy: 'olamidefelix54@gmail.com', notes: 'Private Beta Tester 5 (Surulere Supermarket)', usedBy: [], redeemedAt: null },
+        ];
+        saveLocalStoredInvitations(seedInvs);
+        seedInvs.forEach(inv => codeMap.set(inv.code, inv));
+      }
+
       setInvitations(Array.from(codeMap.values()));
 
       if (usersData?.users) setUsers(usersData.users);

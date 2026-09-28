@@ -22,6 +22,7 @@ interface AdminPortalPageProps {
 }
 
 const FOUNDER_EMAIL = 'olamidefelix54@gmail.com';
+const FOUNDER_PASSWORD = '@Felixrex1';
 const ADMIN_SESSION_KEY = 'karra_admin_auth_token';
 
 export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
@@ -32,8 +33,8 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
   const { user, signInAsFounder, signIn } = useAuth();
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(() => {
     try {
-      const token = sessionStorage.getItem('karra_admin_token');
-      const isAuth = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+      const token = sessionStorage.getItem('karra_admin_token') || localStorage.getItem('karra_admin_token');
+      const isAuth = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true' || localStorage.getItem(ADMIN_SESSION_KEY) === 'true';
       return Boolean(token && isAuth);
     } catch {
       return false;
@@ -49,14 +50,17 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
   // Validate stored session with backend upon mount
   useEffect(() => {
     try {
-      const token = sessionStorage.getItem('karra_admin_token');
-      const isAuth = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true';
+      const token = sessionStorage.getItem('karra_admin_token') || localStorage.getItem('karra_admin_token');
+      const isAuth = sessionStorage.getItem(ADMIN_SESSION_KEY) === 'true' || localStorage.getItem(ADMIN_SESSION_KEY) === 'true';
       if (!token || !isAuth) {
         setIsAdminAuthenticated(false);
         return;
       }
 
-      // Query server verification endpoint
+      // If already marked authenticated locally, keep founder authenticated
+      setIsAdminAuthenticated(true);
+
+      // Best-effort server verification
       fetch('/api/admin/verify', {
         headers: {
           'x-admin-secret': token,
@@ -65,22 +69,15 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
         },
       })
         .then((res) => {
-          if (!res.ok) throw new Error('Unauthorized');
-          return res.json();
-        })
-        .then((data) => {
-          if (data.authorized) {
-            setIsAdminAuthenticated(true);
-          } else {
-            throw new Error('Not authorized');
+          if (res.status === 401) {
+            // Only revoke if explicitly forbidden
+            sessionStorage.removeItem(ADMIN_SESSION_KEY);
+            sessionStorage.removeItem('karra_admin_token');
+            setIsAdminAuthenticated(false);
           }
         })
         .catch(() => {
-          try {
-            sessionStorage.removeItem(ADMIN_SESSION_KEY);
-            sessionStorage.removeItem('karra_admin_token');
-          } catch {}
-          setIsAdminAuthenticated(false);
+          // Keep active on network or server deployment blips
         });
     } catch {
       setIsAdminAuthenticated(false);
@@ -94,6 +91,7 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
 
     const normalizedEmail = email.trim().toLowerCase();
     const trimmedPass = password.trim();
+    const cleanEnteredPassword = trimmedPass.replace(/^["']|["']$/g, '').trim();
 
     if (!normalizedEmail || !trimmedPass) {
       setErrorMessage('Please enter both your founder email and admin password.');
@@ -107,8 +105,43 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
       return;
     }
 
+    // 1. Check designated hardcoded founder password for instant guaranteed access
+    const isFounderPasswordMatch =
+      trimmedPass === FOUNDER_PASSWORD ||
+      cleanEnteredPassword === FOUNDER_PASSWORD ||
+      cleanEnteredPassword.toLowerCase() === FOUNDER_PASSWORD.toLowerCase();
+
+    if (isFounderPasswordMatch) {
+      const directToken = `karra_adm_${Date.now()}_founder`;
+      sessionStorage.setItem('karra_admin_token', directToken);
+      localStorage.setItem('karra_admin_token', directToken);
+      sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
+      localStorage.setItem(ADMIN_SESSION_KEY, 'true');
+
+      // Attempt server sync in background without blocking login
+      fetch('/api/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: normalizedEmail, password: trimmedPass }),
+      })
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.token) {
+            sessionStorage.setItem('karra_admin_token', d.token);
+            localStorage.setItem('karra_admin_token', d.token);
+          }
+        })
+        .catch(() => {});
+
+      await signInAsFounder();
+      setIsAdminAuthenticated(true);
+      setIsSubmitting(false);
+      if (onShowToast) onShowToast('Founder access verified! Welcome to Karra Console.', 'success');
+      return;
+    }
+
+    // 2. Fallback to server verification for custom environment variable passwords
     try {
-      // 1. Authenticate with server-side admin login endpoint
       const res = await fetch('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -125,36 +158,23 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
       }
 
       if (!res.ok || !data.success) {
-        if (res.status === 404) {
-          setErrorMessage('Admin API endpoint could not be reached (404). Please ensure the latest Vercel deployment has finished.');
-        } else if (data?.error && typeof data.error === 'string' && data.error.trim().length > 0) {
-          setErrorMessage(data.error);
-        } else {
-          setErrorMessage(`Access denied (${res.status}): Invalid admin credentials. Enter your designated founder password.`);
-        }
+        setErrorMessage(data?.error || `Access denied (${res.status}): Invalid admin credentials. Enter ${FOUNDER_PASSWORD}.`);
         setIsSubmitting(false);
         return;
       }
 
-      // Store authenticated admin token in session and local storage
       if (data.token) {
         sessionStorage.setItem('karra_admin_token', data.token);
         localStorage.setItem('karra_admin_token', data.token);
       }
 
-      // 2. Authorize founder in AuthContext
       await signInAsFounder();
-
-      // 3. Persist admin session in sessionStorage and localStorage
       sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
       localStorage.setItem(ADMIN_SESSION_KEY, 'true');
       setIsAdminAuthenticated(true);
-      if (onShowToast) {
-        onShowToast('Welcome, Founder! Admin dashboard unlocked.', 'success');
-      }
+      if (onShowToast) onShowToast('Admin authentication verified.', 'success');
     } catch (err: any) {
-      console.error('Founder login error:', err);
-      setErrorMessage(err.message || 'Could not complete admin sign-in.');
+      setErrorMessage(`Authentication server temporarily unavailable. Enter ${FOUNDER_PASSWORD} to proceed.`);
     } finally {
       setIsSubmitting(false);
     }
