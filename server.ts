@@ -27,24 +27,83 @@ dotenv.config();
 export const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
-app.use(express.json());
-
-// Support Vercel Serverless Function invocations, query rewrites, and reverse proxy forwarding
+// Global CORS & preflight headers for all requests
 app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader(
+    'Access-Control-Allow-Headers',
+    'Content-Type, Authorization, x-admin-secret, x-admin-email, x-user-id, x-user-email'
+  );
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
+
+// JSON body parsing & stringified body normalization
+app.use(express.json());
+app.use((req, res, next) => {
+  if (typeof req.body === 'string' && req.body.length > 0) {
+    try {
+      req.body = JSON.parse(req.body);
+    } catch {
+      // Retain raw string if not JSON
+    }
+  }
+  next();
+});
+
+// Resilient path normalization for Vercel Serverless Function invocations & rewrites
+app.use((req, res, next) => {
+  const rawUrl = req.url || '/';
+  const [pathname, queryString] = rawUrl.split('?');
+  const qs = queryString ? `?${queryString}` : '';
+
+  // 1. If req.url is already a specific /api/... path with a subroute (e.g. /api/beta/status)
+  if (pathname.startsWith('/api/') && pathname.length > 5) {
+    return next();
+  }
+
+  // 2. Query param __path or path injected by Vercel rewrite (e.g. /api?__path=beta/status)
+  const queryPath = (req.query?.__path as string) || (req.query?.path as string);
+  if (queryPath) {
+    const cleanPath = queryPath.replace(/^\/+/, '');
+    const params = new URLSearchParams(queryString || '');
+    params.delete('__path');
+    params.delete('path');
+    const remainingQs = params.toString() ? `?${params.toString()}` : '';
+    req.url = `/api/${cleanPath}${remainingQs}`;
+    return next();
+  }
+
+  // 3. Vercel route matches header (e.g. x-now-route-matches: 1=beta%2Fstatus)
+  const routeMatches = req.headers['x-now-route-matches'] as string;
+  if (routeMatches) {
+    const match = routeMatches.match(/1=([^&]+)/);
+    if (match && match[1]) {
+      const decoded = decodeURIComponent(match[1]).replace(/^\/+/, '');
+      req.url = `/api/${decoded}${qs}`;
+      return next();
+    }
+  }
+
+  // 4. Vercel matched path / invoke path / forwarded url
   const matchedPath =
     (req.headers['x-matched-path'] as string) ||
     (req.headers['x-invoke-path'] as string) ||
     (req.headers['x-forwarded-url'] as string);
-
-  if (matchedPath && (matchedPath.startsWith('/api') || matchedPath.startsWith('/admin') || matchedPath.startsWith('/beta'))) {
-    req.url = matchedPath.split('?')[0];
-  } else if (req.headers['x-now-route-matches']) {
-    const rawMatches = req.headers['x-now-route-matches'] as string;
-    const match = rawMatches.match(/1=([^&]+)/);
-    if (match && match[1]) {
-      req.url = '/api/' + decodeURIComponent(match[1]);
+  if (matchedPath && matchedPath !== '/api' && matchedPath !== '/api/') {
+    const [mPath] = matchedPath.split('?');
+    if (mPath.startsWith('/api/')) {
+      req.url = `${mPath}${qs}`;
+      return next();
+    } else if (mPath.startsWith('/admin') || mPath.startsWith('/beta')) {
+      req.url = `/api${mPath}${qs}`;
+      return next();
     }
   }
+
   next();
 });
 
@@ -430,11 +489,11 @@ adminRouter.get(['/', '/verify', '/api/verify'], (req, res) => {
   res.json({ success: true, authorized: true, role: 'admin', email: FOUNDER_EMAIL });
 });
 
-adminRouter.get('/invitations', (req, res) => {
+adminRouter.get(['/invitations', '/api/invitations'], (req, res) => {
   res.json({ invitations: listInvitations() });
 });
 
-adminRouter.post('/invitations/create', (req, res) => {
+adminRouter.post(['/invitations', '/invitations/create', '/api/invitations', '/api/invitations/create'], (req, res) => {
   const { maxUses, notes, expiresAt, customCode } = req.body;
   const invitation = createInvitation({
     maxUses: Number(maxUses) || 1,
@@ -446,7 +505,7 @@ adminRouter.post('/invitations/create', (req, res) => {
   res.json({ success: true, invitation });
 });
 
-adminRouter.post('/invitations/revoke', (req, res) => {
+adminRouter.post(['/invitations/revoke', '/api/invitations/revoke'], (req, res) => {
   const { code } = req.body;
   if (!code) {
     res.status(400).json({ error: 'code is required.' });
@@ -456,11 +515,11 @@ adminRouter.post('/invitations/revoke', (req, res) => {
   res.json({ success: ok });
 });
 
-adminRouter.get('/users', (req, res) => {
+adminRouter.get(['/users', '/api/users'], (req, res) => {
   res.json({ users: listUsers() });
 });
 
-adminRouter.post('/users/status', (req, res) => {
+adminRouter.post(['/users', '/users/status', '/api/users', '/api/users/status'], (req, res) => {
   const { userId, status } = req.body;
   if (!userId || !['active', 'suspended', 'revoked'].includes(status)) {
     res.status(400).json({ error: 'Valid userId and status (active, suspended, revoked) are required.' });
@@ -470,15 +529,15 @@ adminRouter.post('/users/status', (req, res) => {
   res.json({ success: ok });
 });
 
-adminRouter.get('/feedback', (req, res) => {
+adminRouter.get(['/feedback', '/api/feedback'], (req, res) => {
   res.json({ feedback: listFeedback() });
 });
 
-adminRouter.get(['/requests', '/access-requests'], (req, res) => {
+adminRouter.get(['/requests', '/access-requests', '/api/requests', '/api/access-requests'], (req, res) => {
   res.json({ requests: listRequests() });
 });
 
-adminRouter.get('/analytics', (req, res) => {
+adminRouter.get(['/analytics', '/api/analytics'], (req, res) => {
   res.json({ analytics: getBetaAnalytics() });
 });
 
@@ -925,7 +984,7 @@ async function startServer() {
   });
 }
 
-if (!process.env.VERCEL) {
+if (!process.env.VERCEL && process.env.NODE_ENV !== 'test' && !process.env.IS_TEST) {
   startServer().catch((err) => {
     console.error('Failed to start server:', err);
   });
