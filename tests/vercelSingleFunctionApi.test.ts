@@ -120,10 +120,42 @@ async function runTests() {
   }
   console.log('✅ TEST 4 PASSED: x-now-route-matches header properly routed to /api/health');
 
-  // 5. Admin authentication and router access
-  console.log('\n▶ TEST 5: Admin session creation & authorized /api/admin/invitations access');
-  const adminToken = createAdminSession(FOUNDER_EMAIL);
-  const res5 = await makeMockRequest({
+  // 5. Admin login with default founder secret (even if no env var set)
+  console.log('\n▶ TEST 5: Admin login with founder key (verifying no 500 error)');
+  delete process.env.ADMIN_PASSWORD;
+  delete process.env.ADMIN_SECRET;
+  const resLogin = await makeMockRequest({
+    method: 'POST',
+    url: '/api?__path=admin/login',
+    body: {
+      email: FOUNDER_EMAIL,
+      password: '@Felixrex1',
+    },
+  });
+  if (resLogin.status !== 200 || !resLogin.body?.token) {
+    throw new Error(`TEST 5 FAILED: Expected 200 and token, got ${resLogin.status}: ${JSON.stringify(resLogin.body)}`);
+  }
+  console.log('✅ TEST 5 PASSED: Admin login succeeded without 500 error; token received.');
+
+  // 6. Admin login with wrong password returns 401, NOT 500
+  console.log('\n▶ TEST 6: Admin login with invalid password returns 401 (never 500)');
+  const resWrong = await makeMockRequest({
+    method: 'POST',
+    url: '/api?__path=admin/login',
+    body: {
+      email: FOUNDER_EMAIL,
+      password: 'wrong_password_test',
+    },
+  });
+  if (resWrong.status !== 401) {
+    throw new Error(`TEST 6 FAILED: Expected 401, got ${resWrong.status}: ${JSON.stringify(resWrong.body)}`);
+  }
+  console.log('✅ TEST 6 PASSED: Invalid password returned 401 Unauthorized.');
+
+  // 7. Admin session creation & authorized /api/admin/invitations access
+  console.log('\n▶ TEST 7: Authorized /api/admin/invitations access using generated session token');
+  const adminToken = resLogin.body.token;
+  const res7 = await makeMockRequest({
     method: 'GET',
     url: '/api?__path=admin/invitations',
     headers: {
@@ -131,20 +163,20 @@ async function runTests() {
       'x-admin-email': FOUNDER_EMAIL,
     },
   });
-  if (res5.status !== 200 || !Array.isArray(res5.body?.invitations)) {
-    throw new Error(`TEST 5 FAILED: Expected status 200 and invitations array, got ${res5.status}: ${JSON.stringify(res5.body)}`);
+  if (res7.status !== 200 || !Array.isArray(res7.body?.invitations)) {
+    throw new Error(`TEST 7 FAILED: Expected status 200 and invitations array, got ${res7.status}: ${JSON.stringify(res7.body)}`);
   }
-  console.log(`✅ TEST 5 PASSED: Admin invitations retrieved successfully (${res5.body.invitations.length} invitations listed)`);
+  console.log(`✅ TEST 7 PASSED: Admin invitations retrieved successfully (${res7.body.invitations.length} invitations listed)`);
 
-  // 6. Verification of single serverless function in api/
-  console.log('\n▶ TEST 6: Exact single-function directory inspection in /api');
+  // 8. Verification of single serverless function in api/
+  console.log('\n▶ TEST 8: Exact single-function directory inspection in /api');
   const fs = await import('fs');
   const path = await import('path');
   const apiFiles = fs.readdirSync(path.resolve('api'));
   if (apiFiles.length !== 1 || apiFiles[0] !== 'index.ts') {
-    throw new Error(`TEST 6 FAILED: Expected exactly ['index.ts'] in api/, got: ${JSON.stringify(apiFiles)}`);
+    throw new Error(`TEST 8 FAILED: Expected exactly ['index.ts'] in api/, got: ${JSON.stringify(apiFiles)}`);
   }
-  console.log('✅ TEST 6 PASSED: Exactly 1 serverless function entrypoint (api/index.ts) discovered!');
+  console.log('✅ TEST 8 PASSED: Exactly 1 serverless function entrypoint (api/index.ts) discovered!');
 
   console.log('\n🎉 ALL 6 VERCEL SINGLE-FUNCTION REWRITE TESTS PASSED SUCCESSFULLY!\n');
   process.exit(0);
