@@ -41,18 +41,21 @@ app.use((req, res, next) => {
   next();
 });
 
-// JSON body parsing & stringified body normalization
-app.use(express.json());
+// JSON body parsing with pre-parsed Vercel lambda stream guard
 app.use((req, res, next) => {
-  if (typeof req.body === 'string' && req.body.length > 0) {
-    try {
-      req.body = JSON.parse(req.body);
-    } catch {
-      // Retain raw string if not JSON
+  if (req.body !== undefined && req.body !== null) {
+    (req as any)._body = true;
+    if (typeof req.body === 'string' && req.body.trim().length > 0) {
+      try {
+        req.body = JSON.parse(req.body);
+      } catch {
+        // Retain raw string if not valid JSON
+      }
     }
   }
   next();
 });
+app.use(express.json({ limit: '10mb' }));
 
 // Resilient path normalization for Vercel Serverless Function invocations & rewrites
 app.use((req, res, next) => {
@@ -66,13 +69,18 @@ app.use((req, res, next) => {
   }
 
   // 2. Query param __path or path injected by Vercel rewrite (e.g. /api?__path=beta/status)
-  const queryPath = (req.query?.__path as string) || (req.query?.path as string);
+  const urlParams = new URLSearchParams(queryString || '');
+  const queryPath =
+    urlParams.get('__path') ||
+    urlParams.get('path') ||
+    (req.query?.__path as string) ||
+    (req.query?.path as string);
+
   if (queryPath) {
     const cleanPath = queryPath.replace(/^\/+/, '');
-    const params = new URLSearchParams(queryString || '');
-    params.delete('__path');
-    params.delete('path');
-    const remainingQs = params.toString() ? `?${params.toString()}` : '';
+    urlParams.delete('__path');
+    urlParams.delete('path');
+    const remainingQs = urlParams.toString() ? `?${urlParams.toString()}` : '';
     req.url = `/api/${cleanPath}${remainingQs}`;
     return next();
   }
@@ -993,6 +1001,18 @@ app.all('/api/*', (req, res) => {
   res.status(404).json({
     error: `API endpoint not found: ${req.method} ${req.path}`,
     status: 404,
+  });
+});
+
+// Global Express error handler guaranteeing JSON responses
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Unhandled server error:', err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(500).json({
+    success: false,
+    error: err?.message || 'Internal server error',
   });
 });
 

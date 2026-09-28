@@ -116,17 +116,21 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
       });
 
       let data: any = {};
+      let rawText = '';
       try {
-        data = await res.json();
+        rawText = await res.text();
+        data = JSON.parse(rawText);
       } catch {
-        data = {};
+        data = { error: rawText };
       }
 
       if (!res.ok || !data.success) {
         if (res.status === 404) {
           setErrorMessage('Admin API endpoint could not be reached (404). Please ensure the latest Vercel deployment has finished.');
+        } else if (data?.error && typeof data.error === 'string' && data.error.trim().length > 0) {
+          setErrorMessage(data.error);
         } else {
-          setErrorMessage(data?.error || `Access denied (${res.status}): Invalid admin credentials. Enter your designated founder password.`);
+          setErrorMessage(`Access denied (${res.status}): Invalid admin credentials. Enter your designated founder password.`);
         }
         setIsSubmitting(false);
         return;
