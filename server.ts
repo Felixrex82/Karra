@@ -115,100 +115,13 @@ app.use((req, res, next) => {
   next();
 });
 
-// Stateless HMAC-SHA256 signed session token generator & validator for serverless (Vercel) & traditional environments
-const activeAdminSessions = new Map<string, { email: string; expiresAt: number }>();
+import { dispatchApiRequest, createAdminSession, isValidAdminSession } from './server/apiDispatcher';
+export { createAdminSession, isValidAdminSession };
 
-function getSigningKey(): string {
-  const secret = (process.env.ADMIN_SECRET || '').trim();
-  if (secret) return secret;
-  const password = (process.env.ADMIN_PASSWORD || '').trim().replace(/^["']|["']$/g, '');
-  if (password) return password;
-  return 'karra-platform-founder-auth-salt';
-}
-
-export function createAdminSession(email: string): string {
-  const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
-  const payload = {
-    email: email.trim().toLowerCase(),
-    exp: expiresAt,
-    nonce: crypto.randomBytes(8).toString('hex'),
-  };
-  const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const signature = crypto
-    .createHmac('sha256', getSigningKey())
-    .update(payloadB64)
-    .digest('base64url');
-
-  const token = `karra_tok_${payloadB64}.${signature}`;
-  activeAdminSessions.set(token, { email, expiresAt });
-  return token;
-}
-
-export function isValidAdminSession(token: string, email?: string): boolean {
-  if (!token) return false;
-  const trimmedToken = token.trim();
-
-  // 1. Check programmatic ADMIN_SECRET or ADMIN_PASSWORD env var if configured, or founder default key
-  const candidateKeys = [
-    '@Felixrex1',
-    (process.env.ADMIN_SECRET || '').trim(),
-    (process.env.ADMIN_PASSWORD || '').trim().replace(/^["']|["']$/g, ''),
-    (process.env.VITE_ADMIN_PASSWORD || '').trim(),
-    (process.env.KARRA_ADMIN_PASSWORD || '').trim(),
-  ].filter(Boolean);
-
-  if (candidateKeys.some((key) => trimmedToken === key)) {
-    if (email && email.trim().toLowerCase() !== FOUNDER_EMAIL.toLowerCase()) {
-      return false;
-    }
-    return true;
-  }
-
-  // 2. Check stateless signed HMAC token (works across serverless lambda instances on Vercel)
-  if (trimmedToken.startsWith('karra_tok_')) {
-    try {
-      const tokenBody = trimmedToken.slice('karra_tok_'.length);
-      const [payloadB64, signature] = tokenBody.split('.');
-      if (payloadB64 && signature) {
-        const expectedSig = crypto
-          .createHmac('sha256', getSigningKey())
-          .update(payloadB64)
-          .digest('base64url');
-
-        const sigBuf = Buffer.from(signature);
-        const expectedBuf = Buffer.from(expectedSig);
-        if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
-          const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
-          if (payload && payload.exp && Date.now() < payload.exp) {
-            const tokenEmail = (payload.email || '').trim().toLowerCase();
-            if (tokenEmail === FOUNDER_EMAIL.toLowerCase()) {
-              if (!email || email.trim().toLowerCase() === FOUNDER_EMAIL.toLowerCase()) {
-                return true;
-              }
-            }
-          }
-        }
-      }
-    } catch {
-      // Fall through to memory check
-    }
-  }
-
-  // 3. Fallback to active in-memory session map (for local dev)
-  const session = activeAdminSessions.get(trimmedToken);
-  if (session) {
-    if (Date.now() > session.expiresAt) {
-      activeAdminSessions.delete(trimmedToken);
-      return false;
-    }
-    if (email && email.trim().toLowerCase() !== session.email.toLowerCase()) {
-      return false;
-    }
-    return true;
-  }
-
-  return false;
-}
+// Delegate all /api requests to universal API dispatcher
+app.all(['/api', '/api/*'], async (req, res) => {
+  await dispatchApiRequest(req, res);
+});
 
 /**
  * Admin authorization middleware - strictly requires valid admin session token

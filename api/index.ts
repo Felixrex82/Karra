@@ -1,10 +1,8 @@
-import app from '../server';
+import { dispatchApiRequest } from '../server/apiDispatcher';
 
-export default function handler(req: any, res: any) {
-  if (req && req.body !== undefined && req.body !== null) {
-    req._body = true;
-  }
-  return app(req, res);
+export default async function handler(req: any, res: any) {
+  return dispatchApiRequest(req, res);
 }
+
 
 

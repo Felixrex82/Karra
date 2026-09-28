@@ -63,18 +63,18 @@ export function generateSecureInvitationCode(): string {
 function ensureDataStore(): BetaStoreData {
   if (cachedData) return cachedData;
 
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+    }
 
-  if (fs.existsSync(STORE_FILE)) {
-    try {
+    if (fs.existsSync(STORE_FILE)) {
       const raw = fs.readFileSync(STORE_FILE, 'utf-8');
       cachedData = JSON.parse(raw);
       return cachedData!;
-    } catch (e) {
-      console.error('Error reading beta_data.json, initializing fresh store:', e);
     }
+  } catch (e) {
+    // Filesystem may be restricted in serverless lambda; continue with in-memory store
   }
 
   // Initial seed with 5 unique invitation codes for the initial testers
