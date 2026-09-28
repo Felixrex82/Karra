@@ -74,7 +74,7 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
               rows={3}
               value={introText}
               onChange={(e) => setIntroText(e.target.value)}
-              placeholder="e.g. I run a boutique and food provision shop. I sell shirts for ₦6,000 that cost ₦1,500 each. I also sell bags of rice and sell in bowls for ₦2,000 each..."
+              placeholder="e.g. I run a provisions and retail store. I sell cartons of Indomie for ₦4,500 that cost ₦3,800. I also sell phone chargers for ₦3,500..."
               className="w-full p-3 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#141b2d] text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 dark:focus:ring-emerald-500 resize-none min-h-[90px]"
             />
 
@@ -87,23 +87,34 @@ export const OnboardingModal: React.FC<OnboardingModalProps> = ({
                   type="button"
                   onClick={() =>
                     handleQuickExample(
-                      'I sell quality unisex shirts for ₦6,000 which cost me ₦1,500 each. I also sell bags of rice and sell them in bowls for ₦2,000 each.'
+                      'I run a wholesale and retail provisions store selling Indomie, pasta, and soap. One carton costs ₦12,000 from Musa.'
                     )
                   }
                   className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-left text-slate-700 dark:text-slate-300 transition-colors"
                 >
-                  👕 Clothing & Rice store merchant
+                  📦 Provisions & Food merchant
                 </button>
                 <button
                   type="button"
                   onClick={() =>
                     handleQuickExample(
-                      'I run a provision store selling cold drinks, biscuits, and soap. One carton of drinks costs ₦12,000 from Musa and has 24 bottles.'
+                      'I sell quality unisex native wears and shirts for ₦25,000 which cost me ₦14,000 each in fabric and tailoring.'
                     )
                   }
                   className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-left text-slate-700 dark:text-slate-300 transition-colors"
                 >
-                  🥤 Cold drinks & Provisions merchant
+                  👕 Fashion & Tailoring business
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleQuickExample(
+                      'I sell electronics and phone accessories. Fast chargers sell for ₦4,000 and cost ₦2,200. Power banks sell for ₦18,000 and cost ₦11,000.'
+                    )
+                  }
+                  className="p-2.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-left text-slate-700 dark:text-slate-300 transition-colors"
+                >
+                  ⚡ Electronics & Phone accessories
                 </button>
               </div>
             </div>

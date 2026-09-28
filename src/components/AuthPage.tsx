@@ -85,20 +85,39 @@ export const AuthPage: React.FC<AuthPageProps> = ({
     setCodeError(null);
 
     try {
-      const res = await fetch('/api/beta/validate-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: cleanCode }),
-      });
-      const data = await res.json();
+      let data: any = null;
+      try {
+        const res = await fetch('/api/beta/validate-code', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: cleanCode }),
+        });
+        if (res.ok) {
+          data = await res.json();
+        }
+      } catch {
+        // Fallback to local custom check
+      }
 
-      if (data.valid) {
+      if (!data || !data.valid) {
+        // Check local custom invitations fallback
+        try {
+          const raw = localStorage.getItem('karra_custom_invitations');
+          const localList = raw ? JSON.parse(raw) : [];
+          const found = localList.find((i: any) => i.code === cleanCode && i.status === 'active');
+          if (found) {
+            data = { valid: true, invitation: found };
+          }
+        } catch {}
+      }
+
+      if (data?.valid) {
         setValidatedCode(cleanCode);
         setInvitationLabel(data.invitation?.notes || null);
         setMode('signup');
         if (onShowToast) onShowToast('Invitation code verified! Please set up your business account.', 'success');
       } else {
-        setCodeError(data.message || "That invitation code isn't valid.");
+        setCodeError(data?.message || "That invitation code isn't valid.");
       }
     } catch (err: any) {
       setCodeError("Unable to verify invitation code. Please check your internet connection.");

@@ -39,8 +39,12 @@ interface BusinessMemoryViewProps {
   businessRules: BusinessRule[];
   onUpdateProductCost: (productName: string, newCost: number) => void;
   onAddProduct?: (product: ProductMemory) => void;
+  onDeleteProduct?: (productId: string, productName: string) => void;
   onAddUnitRelationship: (rel: UnitRelationship) => void;
+  onDeleteUnitRelationship?: (unitId: string) => void;
   onUpdateCustomerBalance: (customerName: string, newBalance: number) => void;
+  onDeleteCustomer?: (customerId: string, customerName: string) => void;
+  onDeleteBusinessRule?: (ruleId: string) => void;
   onSettleCustomerDebt?: (customerName: string, amount: number) => void;
   onShowToast?: (message: string, type?: 'success' | 'info' | 'warning') => void;
   businessName?: string;
@@ -55,8 +59,12 @@ export const BusinessMemoryView: React.FC<BusinessMemoryViewProps> = ({
   businessRules,
   onUpdateProductCost,
   onAddProduct,
+  onDeleteProduct,
   onAddUnitRelationship,
+  onDeleteUnitRelationship,
   onUpdateCustomerBalance,
+  onDeleteCustomer,
+  onDeleteBusinessRule,
   onSettleCustomerDebt,
   onShowToast,
   businessName,
@@ -77,6 +85,10 @@ export const BusinessMemoryView: React.FC<BusinessMemoryViewProps> = ({
   // Quick edit modal states
   const [editingProduct, setEditingProduct] = useState<ProductMemory | null>(null);
   const [newProductCost, setNewProductCost] = useState<number>(0);
+
+  // Deletion confirmation modal states
+  const [productToDelete, setProductToDelete] = useState<ProductMemory | null>(null);
+  const [customerToDelete, setCustomerToDelete] = useState<CustomerMemory | null>(null);
 
   // Add unit rule states
   const [isAddingUnit, setIsAddingUnit] = useState(false);
@@ -319,17 +331,27 @@ export const BusinessMemoryView: React.FC<BusinessMemoryViewProps> = ({
                       </p>
                     </div>
 
-                    <button
-                      onClick={() => {
-                        setEditingProduct(p);
-                        setNewProductCost(p.currentCost);
-                      }}
-                      className="p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold flex items-center space-x-1 min-h-[36px]"
-                      title="Update supplier wholesale cost"
-                    >
-                      <Edit className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">Update Cost</span>
-                    </button>
+                    <div className="flex items-center space-x-1.5 shrink-0">
+                      <button
+                        onClick={() => {
+                          setEditingProduct(p);
+                          setNewProductCost(p.currentCost);
+                        }}
+                        className="p-2 rounded-xl text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold flex items-center space-x-1 min-h-[36px] cursor-pointer"
+                        title="Update supplier wholesale cost"
+                      >
+                        <Edit className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Update Cost</span>
+                      </button>
+                      <button
+                        onClick={() => setProductToDelete(p)}
+                        className="p-2 rounded-xl text-rose-600 dark:text-rose-400 hover:text-rose-700 dark:hover:text-rose-300 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs font-semibold flex items-center space-x-1 min-h-[36px] cursor-pointer transition-colors"
+                        title="Delete product from memory"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span className="hidden sm:inline">Delete</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Financial Metrics Strip */}
@@ -422,6 +444,47 @@ export const BusinessMemoryView: React.FC<BusinessMemoryViewProps> = ({
                     className="px-5 py-2.5 rounded-xl text-xs font-semibold bg-slate-900 dark:bg-emerald-600 text-white hover:bg-slate-800 dark:hover:bg-emerald-500 shadow-xs min-h-[40px]"
                   >
                     Save & Remember
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Delete Product Confirmation Modal */}
+          {productToDelete && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+              <div className="w-full max-w-sm bg-white dark:bg-[#161f32] rounded-2xl p-5 sm:p-6 shadow-xl border border-slate-200 dark:border-slate-700 space-y-4">
+                <div className="flex items-center space-x-3 text-rose-600 dark:text-rose-400">
+                  <div className="p-2.5 rounded-xl bg-rose-100 dark:bg-rose-950/60">
+                    <Trash2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">Delete Product from Memory?</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">{productToDelete.name}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Are you sure you want to permanently delete <strong>{productToDelete.name}</strong> from your Business Memory? Any yield conversion rules tied to it will also be removed. Existing historical sales logs will keep their recorded transactions.
+                </p>
+                <div className="flex items-center justify-end space-x-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setProductToDelete(null)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer min-h-[36px]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onDeleteProduct) {
+                        onDeleteProduct(productToDelete.id, productToDelete.name);
+                      }
+                      setProductToDelete(null);
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white shadow-xs cursor-pointer min-h-[36px]"
+                  >
+                    Yes, Delete Product
                   </button>
                 </div>
               </div>
@@ -595,6 +658,16 @@ export const BusinessMemoryView: React.FC<BusinessMemoryViewProps> = ({
                       Product: <strong className="text-slate-800 dark:text-slate-200">{rel.productName}</strong>
                     </p>
                   </div>
+                  {onDeleteUnitRelationship && (
+                    <button
+                      type="button"
+                      onClick={() => onDeleteUnitRelationship(rel.id)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
+                      title="Delete unit relationship"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
 
                 <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#0d1322] border border-slate-100 dark:border-slate-800/80 grid grid-cols-2 gap-3 text-xs">
@@ -907,22 +980,34 @@ export const BusinessMemoryView: React.FC<BusinessMemoryViewProps> = ({
                         Phone: {c.phone || 'Not recorded'} • Reliability: {c.paymentReliability || 'Medium'}
                       </span>
                     </div>
-                    <span
-                      className={`px-2.5 py-1 rounded-full text-xs font-bold font-mono shrink-0 flex items-center space-x-1 ${
-                        !isSettled
-                          ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
-                          : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-900 dark:text-emerald-300 border border-emerald-300/60 dark:border-emerald-800'
-                      }`}
-                    >
-                      {isSettled ? (
-                        <>
-                          <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                          <span>Debt Settled • Memory Retained</span>
-                        </>
-                      ) : (
-                        <span>Owes {formatNaira(c.outstandingBalance)}</span>
+                    <div className="flex items-center space-x-1.5 shrink-0">
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-xs font-bold font-mono flex items-center space-x-1 ${
+                          !isSettled
+                            ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-900 dark:text-amber-300 border border-amber-300 dark:border-amber-700'
+                            : 'bg-emerald-100 dark:bg-emerald-950/60 text-emerald-900 dark:text-emerald-300 border border-emerald-300/60 dark:border-emerald-800'
+                        }`}
+                      >
+                        {isSettled ? (
+                          <>
+                            <Sparkles className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                            <span>Debt Settled • Memory Retained</span>
+                          </>
+                        ) : (
+                          <span>Owes {formatNaira(c.outstandingBalance)}</span>
+                        )}
+                      </span>
+                      {onDeleteCustomer && (
+                        <button
+                          type="button"
+                          onClick={() => setCustomerToDelete(c)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
+                          title="Delete customer from memory"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
                       )}
-                    </span>
+                    </div>
                   </div>
 
                   <div className="p-3 rounded-xl bg-slate-50 dark:bg-[#0d1322] border border-slate-100 dark:border-slate-800/80 grid grid-cols-2 gap-3 text-xs">
@@ -1016,6 +1101,47 @@ export const BusinessMemoryView: React.FC<BusinessMemoryViewProps> = ({
               );
             })}
           </div>
+
+          {/* Delete Customer Confirmation Modal */}
+          {customerToDelete && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
+              <div className="w-full max-w-sm bg-white dark:bg-[#161f32] rounded-2xl p-5 sm:p-6 shadow-xl border border-slate-200 dark:border-slate-700 space-y-4">
+                <div className="flex items-center space-x-3 text-rose-600 dark:text-rose-400">
+                  <div className="p-2.5 rounded-xl bg-rose-100 dark:bg-rose-950/60">
+                    <Trash2 className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white">Delete Customer Profile?</h3>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium mt-0.5">{customerToDelete.name}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Are you sure you want to permanently delete <strong>{customerToDelete.name}</strong> from your Customer Memory bank? Existing transaction logs in your ledger will keep their records.
+                </p>
+                <div className="flex items-center justify-end space-x-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setCustomerToDelete(null)}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer min-h-[36px]"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (onDeleteCustomer) {
+                        onDeleteCustomer(customerToDelete.id, customerToDelete.name);
+                      }
+                      setCustomerToDelete(null);
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-semibold bg-rose-600 hover:bg-rose-700 text-white shadow-xs cursor-pointer min-h-[36px]"
+                  >
+                    Yes, Delete Customer
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1082,11 +1208,23 @@ export const BusinessMemoryView: React.FC<BusinessMemoryViewProps> = ({
               <div className="flex-1">
                 <div className="flex items-center justify-between gap-2">
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white">{rule.headline || rule.ruleName || rule.category}</h3>
-                  <span className="text-xs font-mono font-bold text-violet-800 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/50 px-2 py-0.5 rounded shrink-0">
-                    {typeof rule.ruleValue === 'number'
-                      ? formatNaira(rule.ruleValue)
-                      : rule.ruleValue || (rule.active ? 'Active' : 'Disabled')}
-                  </span>
+                  <div className="flex items-center space-x-1.5 shrink-0">
+                    <span className="text-xs font-mono font-bold text-violet-800 dark:text-violet-300 bg-violet-50 dark:bg-violet-950/50 px-2 py-0.5 rounded">
+                      {typeof rule.ruleValue === 'number'
+                        ? formatNaira(rule.ruleValue)
+                        : rule.ruleValue || (rule.active ? 'Active' : 'Disabled')}
+                    </span>
+                    {onDeleteBusinessRule && (
+                      <button
+                        type="button"
+                        onClick={() => onDeleteBusinessRule(rule.id)}
+                        className="p-1 rounded-lg text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors cursor-pointer"
+                        title="Delete rule"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">{rule.summary || rule.description}</p>
               </div>

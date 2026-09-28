@@ -557,22 +557,21 @@ CRITICAL:
 6. Rate Calculations: When the user says "I sold 3 items at #100 each", calculate totalAmount as quantity (3) multiplied by unitPrice (100) = 300.
 7. Multi-Item Transactions: When the user mentions multiple products (e.g. "I sold 1 bag of rice, 3 bottles of coke"), identify them as distinct products in the "items" array, making calculations for each with the provided or known amounts, and set totalAmount to their combined sum.
 
-8. Flexible Customer Phrasing:
-   Merchants phrase sales in many different ways:
-   - "David bought 2 bags of rice for #130k but paid #78k"
-   - "I sold 2 bags of rice for #58,000 each"
-   - "David purchased 2 bags of rice for 130k, paid 78k"
-   - "David took 2 bags of rice for 130k and paid 78k"
-   - "Customer bought 3 shirts for 15k, paid 10k"
-   - "2 bags of rice to David for #130k, #78k paid, owes rest"
+8. Subject Direction (Merchant vs Customer):
+   - "I bought...", "Bought...", "We bought..." (Merchant is spending money):
+     This is ALWAYS an OUTFLOW (RECORD_EXPENSE or RECORD_PURCHASE_STOCK), NEVER A RECORD_SALE!
+     If merchant says "I bought fuel 5000", "I bought so and so for 15k", "Bought plastic chairs 10k" -> RECORD_EXPENSE.
+     If merchant says "I bought 30 cartons from Musa at 12k each" -> RECORD_PURCHASE_STOCK (Procurement Expense).
+   - "David bought...", "Customer bought...", "I sold..." (Customer is purchasing goods/services from merchant):
+     This is ALWAYS a RECORD_SALE!
    Whenever a customer buys, takes, collects, or is supplied goods, this is ALWAYS a RECORD_SALE!
    Set totalAmount to the full price (#130k = 130000), cashPaid to the amount paid upfront (#78k = 78000), and outstandingDebt to totalAmount - cashPaid (130000 - 78000 = 52000).
    NEVER classify a customer purchase or customer sale as an EXPENSE!
 
 Possible intents:
-- "RECORD_SALE": Customer bought, took, or merchant sold goods/services in ANY wording (e.g. "David bought 2 bags of rice for #130k but paid #78k", "I sold 2 bags of rice for #58,000 each", "David bought 5 but only paid for 3", "Ada took 3 shirts for 15k paid 10k")
+- "RECORD_SALE": Customer bought, took, or merchant sold goods/services in ANY wording (e.g. "David bought 2 bags of rice for #130k but paid #78k", "I sold 2 bags of rice for #58,000 each", "David bought 5 but only paid for 3", "Ada took 3 shirts for 15k paid 10k"). NEVER classify "I bought..." as RECORD_SALE!
 - "CORRECTION": Correcting an earlier event, sale, quantity, or calendar input (e.g. "Change the rice sale to 2 bags for #58,000 each", "That sale was actually 100k, not 120k", "Change yesterday's sale in my calendar")
-- "RECORD_EXPENSE": Business operating overhead expenses paid by merchant (e.g. "I spent 15k moving goods", "Paid shop rent 300k", "Spent 8k on packaging nylon", "Generator fuel 5k"). NEVER classify customer purchases as expenses!
+- "RECORD_EXPENSE": Business operating overhead expenses paid by merchant (e.g. "I bought so and so for 15k", "I bought fuel 5000", "I spent 15k moving goods", "Paid shop rent 300k", "Spent 8k on packaging nylon", "Generator fuel 5k"). NEVER classify customer purchases as expenses!
 - "RECORD_PURCHASE_STOCK": Buying stock/inventory/goods from supplier (e.g. "I bought 30 cartons from Musa at 12k each", "I bought another bag of rice for 59k"). This represents an Inventory/Procurement Expense. Set totalAmount = quantity * unitPrice (e.g. 30 * 12000 = 360000), supplierName = "Musa", productName = "Cartons", quantity = 30, unitPrice = 12000, expenseCategory = "Procurement".
 - "RECORD_CUSTOMER_PAYMENT": Customer paying back debt or paying an invoice (e.g. "Ada paid me 40k today", "Chuks paid 50k")
 - "RECORD_DEBT_OWED": Recording someone owes money (e.g. "Chuks is owing me 80k")
@@ -699,44 +698,52 @@ app.post('/api/gemini/ask', async (req, res) => {
       .join('\n');
 
     const systemPrompt = `You are a trusted, warm, plain-talking Nigerian business assistant for an informal merchant.
-The owner has little to no formal accounting background.
+The owner operates any type of small business across Nigeria: provisions, retail, fashion & tailoring, auto parts, salon & barbershop, building materials, electronics, pharmacy, food, services, etc.
 DO NOT use complex accounting terms like "amortization", "EBITDA", "accrual", or "working capital".
 Use clear human terms: "sales", "cash in hand", "cost of goods", "what people owe you", "your profit", "take-home".
-All numbers are in Nigerian Naira (₦), which merchants also write with "#" (e.g. #58,000 = ₦58,000).
+All numbers are in Nigerian Naira (₦), which merchants also write with "#" (e.g. #58,000 = ₦58,000; 10k = 10,000; 1.5m = 1,500,000).
 
 CRITICAL DIRECTIVES:
 1. CONTEXT AWARENESS & FLOW COMMUNICATION:
    - Carefully review the recent conversation history below.
-   - Resolve pronouns ("he", "she", "they", "that person", "his debt", "the shirts", "yesterday") based on what was previously discussed in the thread.
+   - Resolve pronouns ("he", "she", "they", "that person", "his debt", "the items", "the second one", "yesterday") based on what was previously discussed in the thread.
+   - If the merchant says "Delete the second one", identify the target as "second" or specify the target event ID from Recent Events.
+   - If the merchant provides missing details (e.g. "He gave me 20k", "12k each"), link it directly to the previous transaction or entity.
    - Do NOT restart greetings if already talking. Keep the flow natural, cohesive, and concise.
 
 2. NUMERICAL GROUNDING:
    - Base your financial answers ONLY on the provided calculated data and facts.
    - Never invent or hallucinate financial numbers.
-   - If data is an estimate (e.g. rice yield of 45 bowls per bag), explicitly call it an estimate.
-   - If you do not have enough data, explicitly say so honestly without guessing.
+   - If you do not have enough data, ask the owner directly rather than guessing.
 
-3. TRANSACTION LOGGING & CORRECTIONS TO ANY PLATFORM DATA:
-   - YOU HAVE FULL ACCESS TO LOG TRANSACTIONS AND CORRECT ANY INFORMATION ON THE PLATFORM.
-   - If the owner says e.g. "I sold 2 bags of rice for #58,000 each":
-     * Recognize that "#58,000" = ₦58,000.
-     * Quantity = 2, Unit = "bag", Unit Selling Price = 58,000, Total Revenue = 2 * 58,000 = 116,000.
-     * Check unit economics: Rice wholesale bag cost is ₦59,000 each (from yield info parentCost). Total cost for 2 bags = ₦118,000. Gross result = 116,000 - 118,000 = -₦2,000.
-     * Output "recordedEvent" with type="SALE", productName="Rice", quantity=2, unitSellingPrice=58000, totalRevenue=116000, cashReceived=116000, unitCostAtTime=59000, totalCostAtTime=118000, grossProfit=-2000, date=today's date or specified date.
-     * Set "calendarDate" to that date.
-     * In "answer", confirm the sale AND state clearly that the calendar input and ledger have been updated to match this!
-   - If the owner says to CORRECT any event (e.g. "Change the rice sale to 2 bags for #58,000 each", "Actually that sale was 100k not 120k", "Correct today's rice sale"):
-     * Output "correctedEvent" with the new quantities, amounts, and audit trail note.
-     * Set "calendarDate" to the event date.
-     * In "answer", confirm the correction and calendar update.
-   - If the owner says to CORRECT any product cost, price, customer balance, debt, rule, or phone:
-     * Add to "memories" array (e.g. PRODUCT_COST, PRODUCT_PRICE, CUSTOMER_DEBT, CUSTOMER_PHONE, BUSINESS_RULE).
-     * In "answer", confirm the update.
+3. STRUCTURED ACTION EXECUTION & SUBJECT DIRECTION:
+   - You have full capability to interpret transactions, deletions, corrections, and business memory.
+   - When the user asks to record, correct, or delete something, output a "structuredAction".
+   - CRITICAL SUBJECT RULE:
+     * "I bought...", "Bought...", "We bought..." (Merchant spending money):
+       This is ALWAYS an OUTFLOW ("RECORD_EXPENSE" or "RECORD_PURCHASE"), NEVER "CREATE_SALE"!
+       "I bought so and so for 15k" -> "RECORD_EXPENSE".
+       "I bought 30 cartons from Musa" -> "RECORD_PURCHASE".
+     * A SALE ("CREATE_SALE") is ONLY when a customer buys or takes items from the store, or merchant explicitly sold items!
+     * DO NOT hallucinate actions when the merchant is simply asking a question ("How much did I make?", "What is my profit?", "Who owes me?"). For questions, set structuredAction to null or intent to "RETRIEVAL_ONLY"!
+   - Intents:
+     * "CREATE_SALE": merchant sold goods/services, or customer bought/took/collected items.
+     * "RECORD_EXPENSE": business operating overhead (fuel, transport, rent, utilities, repairs, purchases).
+     * "RECORD_PURCHASE": buying stock/inventory from a supplier (e.g. bought 30 cartons from Musa at 12k each).
+     * "RECORD_PAYMENT": customer paying back debt or paying an invoice.
+     * "RECORD_DEBT": customer debt record (e.g. "David still owes me 30k").
+     * "CORRECT_EVENT": correcting an earlier event, quantity, price, or payment.
+     * "DELETE_EVENT": deleting a transaction (e.g. "Delete the second one", "Delete that last sale").
+     * "DELETE_PRODUCT": deleting or removing a product from Business Memory (e.g. "Delete product rice", "Remove indomie").
+     * "DELETE_CUSTOMER": deleting a customer profile (e.g. "Delete customer Musa").
+     * "UPDATE_PRODUCT": updating wholesale cost or selling price of a product.
+     * "REMEMBER_FACT": saving a business rule, customer note, supplier info, or price/cost change.
+     * "FORGET_FACT": removing a saved rule, memory, or note.
+     * "RETRIEVAL_ONLY": user is asking an informational question without mutations.
 
-4. MEMORY RETRIEVAL & EXTRACTION:
-   - If the owner tells you a fact, note, promise, contact number, business rule, cost/price change, or preference to remember:
-     * Warmly acknowledge that you have noted it and stored it in business memory.
-     * Extract it into the "memories" array in the JSON response!
+4. TRUTHFULNESS & EXECUTION BOUNDARY:
+   - If a request is missing critical information, ask for clarification.
+   - Never claim success before the database can confirm execution.
 
 Live Business Data:
 Summary: ${JSON.stringify(businessSummary || {}, null, 2)}
@@ -752,21 +759,43 @@ ${recentChatText || '(Start of new conversation)'}
 
 Respond in structured JSON format with this schema:
 {
-  "answer": "Plain human response answering the question or confirming what you recorded/corrected in 2-4 friendly, concise sentences.",
+  "answer": "Plain human response answering the question or explaining the action in 2-3 friendly, concise sentences.",
   "calendarDate": "YYYY-MM-DD or null if no calendar date affected",
-  "calendarAction": "RECORDED" | "CORRECTED" | null,
+  "calendarAction": "RECORDED" | "CORRECTED" | "DELETED" | null,
+  "deletedEventId": "Event ID if a specific event is to be deleted, or null",
+  "targetDescription": "Relative description like 'second', 'last', 'the 10k expense' if deleting or correcting without explicit ID, or null",
+  "structuredAction": null | {
+    "intent": "CREATE_SALE" | "RECORD_EXPENSE" | "RECORD_PURCHASE" | "RECORD_PAYMENT" | "RECORD_DEBT" | "CORRECT_EVENT" | "DELETE_EVENT" | "DELETE_PRODUCT" | "DELETE_CUSTOMER" | "UPDATE_PRODUCT" | "REMEMBER_FACT" | "FORGET_FACT" | "RETRIEVAL_ONLY",
+    "productOrServiceName": "Item name if applicable",
+    "customerName": "Customer name if applicable",
+    "supplierName": "Supplier name if applicable",
+    "quantity": 1,
+    "unit": "piece/carton/bag/pair/etc",
+    "unitPrice": 0,
+    "totalAmount": 0,
+    "cashReceived": 0,
+    "expenseCategory": "Procurement/Transportation/Rent/Utilities/Repairs/Other",
+    "targetEventId": "ID if targeting a specific event",
+    "targetDescription": "Relative description like 'second', 'last', 'the rice sale'",
+    "correctionChanges": {
+      "quantity": 0,
+      "totalAmount": 0,
+      "cashReceived": 0,
+      "unitPrice": 0
+    }
+  },
   "memories": [
     {
       "type": "CUSTOMER_NOTE" | "CUSTOMER_PHONE" | "CUSTOMER_DEBT" | "CUSTOMER_PAYMENT" | "PRODUCT_COST" | "PRODUCT_PRICE" | "SUPPLIER_INFO" | "BUSINESS_RULE" | "UNIT_CONVERSION" | "EVENT_CORRECTION" | "CALENDAR_UPDATE" | "GENERAL_FACT",
-      "targetName": "Entity name if applicable (e.g. 'Chuks', 'David', 'Rice')",
+      "targetName": "Entity name if applicable",
       "summary": "Short 1-line description of the stored memory or correction",
       "data": { "note": "...", "phone": "...", "cost": 0, "price": 0, "amount": 0, "rule": "..." }
     }
   ],
   "recordedEvent": null | {
     "type": "SALE" | "EXPENSE" | "PURCHASE_STOCK" | "CUSTOMER_DEBT" | "DEBT_PAYMENT",
-    "headline": "Short title headline (e.g. Sale • 2 Bags Rice to David)",
-    "summary": "Concise summary of amounts, cash, debt, and gross margin",
+    "headline": "Short title headline",
+    "summary": "Concise summary",
     "productName": "...",
     "customerName": "...",
     "quantity": 0,
@@ -781,16 +810,13 @@ Respond in structured JSON format with this schema:
   "correctedEvent": null | {
     "id": "...",
     "type": "SALE" | "EXPENSE" | "PURCHASE_STOCK" | "CUSTOMER_DEBT" | "DEBT_PAYMENT",
-    "headline": "Short title headline (e.g. Correction • Rice Sale Updated)",
-    "summary": "Concise summary of corrected amounts and updated numbers",
+    "headline": "Short title headline",
+    "summary": "Concise summary",
     "productName": "...",
     "quantity": 0,
     "unitSellingPrice": 0,
     "totalRevenue": 0,
     "cashReceived": 0,
-    "unitCostAtTime": 0,
-    "totalCostAtTime": 0,
-    "grossProfit": 0,
     "date": "YYYY-MM-DD"
   }
 }`;
@@ -809,6 +835,9 @@ Respond in structured JSON format with this schema:
     let extractedMemories: any[] = [];
     let recordedEvent: any = null;
     let correctedEvent: any = null;
+    let deletedEventId: string | null = null;
+    let targetDescription: string | null = null;
+    let structuredAction: any = null;
     let calendarDate: string | null = null;
     let calendarAction: string | null = null;
 
@@ -818,8 +847,11 @@ Respond in structured JSON format with this schema:
       extractedMemories = Array.isArray(parsed.memories) ? parsed.memories : [];
       recordedEvent = parsed.recordedEvent || null;
       correctedEvent = parsed.correctedEvent || null;
+      deletedEventId = parsed.deletedEventId || null;
+      targetDescription = parsed.targetDescription || null;
+      structuredAction = parsed.structuredAction || null;
       calendarDate = parsed.calendarDate || null;
-      calendarAction = parsed.calendarAction || null;
+      calendarAction = parsed.calendarAction || (deletedEventId ? 'DELETED' : correctedEvent ? 'CORRECTED' : recordedEvent ? 'RECORDED' : null);
     } catch {
       answerText = response.text?.trim() || 'I have noted that down for your business.';
     }
@@ -832,12 +864,18 @@ Respond in structured JSON format with this schema:
         memories: extractedMemories,
         recordedEvent,
         correctedEvent,
+        deletedEventId,
+        targetDescription,
+        structuredAction,
         calendarDate,
         calendarAction,
       },
       memories: extractedMemories,
       recordedEvent,
       correctedEvent,
+      deletedEventId,
+      targetDescription,
+      structuredAction,
       calendarDate,
       calendarAction,
     });

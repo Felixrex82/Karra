@@ -22,10 +22,24 @@ import {
   Calendar,
 } from 'lucide-react';
 import { BusinessState, ChatMessage, MemoryUpdateItem, BusinessEvent } from '../types';
-import { answerBusinessQuestionWithMemory } from '../engine/nlpInterpreter';
+import {
+  answerBusinessQuestionWithMemory,
+  isMerchantSpendingStatement,
+  parseMerchantExpenseOrPurchase,
+  handleCorrectionInput,
+  parseNairaAmount,
+} from '../engine/nlpInterpreter';
 import { formatNaira } from '../engine/calculations';
 import { getTodayDateStr } from '../utils/dateUtils';
 import { ensureEventHeadlineAndSummary, ensureMemoryHeadlineAndSummary } from '../engine/eventSummarizer';
+import { useVoiceInput } from '../hooks/useVoiceInput';
+import {
+  executeBusinessAction,
+  findTargetEvent,
+  matchProductFuzzy,
+  matchCustomerFuzzy,
+  StructuredBusinessAction,
+} from '../engine/businessEngine';
 
 interface ConversationalQuestionsProps {
   state: BusinessState;
@@ -65,10 +79,23 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
   const [inputQuestion, setInputQuestion] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showMemoriesVault, setShowMemoriesVault] = useState(false);
-  const [isListening, setIsListening] = useState(false);
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
+
+  const {
+    isListening,
+    interimTranscript,
+    errorMessage: voiceError,
+    isSupported: isVoiceSupported,
+    toggleListening: handleVoiceToggle,
+  } = useVoiceInput({
+    onTranscript: (spokenText) => {
+      if (spokenText.trim()) {
+        setInputQuestion(spokenText.trim());
+      }
+    },
+  });
 
   // Sync with state.chatHistory if updated externally
   useEffect(() => {
@@ -109,16 +136,6 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
       return () => clearTimeout(timer);
     }
   }, [messages, isLoading]);
-
-  const handleVoiceToggle = () => {
-    setIsListening((prev) => !prev);
-    if (!isListening) {
-      setTimeout(() => {
-        setIsListening(false);
-        setInputQuestion('How much is Musa owing me right now?');
-      }, 2000);
-    }
-  };
 
   // Derive all distinct memories learned across the active session
   const sessionMemories = messages
@@ -327,12 +344,237 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         } else if (Array.isArray(json.memories) && json.memories.length > 0) {
           extractedMemories = json.memories;
         }
-        recordedEvents = json.data?.recordedEvents || json.recordedEvents || undefined;
-        recordedEvent = json.data?.recordedEvent || json.recordedEvent || (recordedEvents && recordedEvents[0]) || undefined;
-        correctedEvent = json.data?.correctedEvent || json.correctedEvent || undefined;
-        deletedEventId = json.data?.deletedEventId || json.deletedEventId || undefined;
-        calendarDate = json.data?.calendarDate || json.calendarDate || undefined;
-        calendarAction = json.data?.calendarAction || json.calendarAction || undefined;
+
+        // Check if server returned a structured business action to execute
+        const action: StructuredBusinessAction | undefined = json.data?.structuredAction || json.structuredAction;
+        if (action && action.intent && action.intent !== 'RETRIEVAL_ONLY') {
+          const execRes = executeBusinessAction(action, state);
+          if (!execRes.success) {
+            answerText = execRes.message || "I couldn't perform that action. Your business records remain unchanged.";
+            calendarAction = undefined;
+            recordedEvent = undefined;
+            recordedEvents = undefined;
+            correctedEvent = undefined;
+            deletedEventId = undefined;
+          } else {
+            recordedEvent = execRes.createdEvent;
+            recordedEvents = execRes.createdEvents;
+            correctedEvent = execRes.correctedEvent;
+            deletedEventId = execRes.deletedEventId;
+            calendarDate = action.date || getTodayDateStr();
+            calendarAction = execRes.deletedEventId
+              ? 'DELETED'
+              : execRes.deletedProductId
+              ? 'Product Deleted'
+              : execRes.deletedCustomerId
+              ? 'Customer Deleted'
+              : execRes.correctedEvent
+              ? 'CORRECTED'
+              : 'RECORDED';
+            answerText = execRes.message || answerText;
+            if (execRes.memoryUpdates && execRes.memoryUpdates.length > 0) {
+              extractedMemories = [...extractedMemories, ...execRes.memoryUpdates];
+            }
+          }
+        } else {
+          // Direct event payloads or client-validated deletion/edit intent
+          const rawDelId = json.data?.deletedEventId || json.deletedEventId;
+          const targetDesc = json.data?.targetDescription || json.targetDescription || q;
+          const lowerQ = q.toLowerCase().trim();
+
+          const isExplicitDelete =
+            Boolean(rawDelId) ||
+            lowerQ.startsWith('delete') ||
+            lowerQ.startsWith('remove') ||
+            lowerQ.startsWith('void') ||
+            lowerQ.startsWith('clear') ||
+            lowerQ.startsWith('please delete') ||
+            lowerQ.startsWith('can you delete') ||
+            lowerQ.includes('delete ') ||
+            lowerQ.includes('remove ') ||
+            lowerQ.includes('void ') ||
+            lowerQ.includes('delete product') ||
+            lowerQ.includes('delete customer') ||
+            lowerQ.includes('delete sale') ||
+            lowerQ.includes('delete expense') ||
+            (answerText.toLowerCase().includes('deleted') &&
+              (lowerQ.includes('delete') || lowerQ.includes('remove') || lowerQ.includes('void')));
+
+          const isExplicitEdit =
+            lowerQ.startsWith('edit') ||
+            lowerQ.startsWith('change') ||
+            lowerQ.startsWith('correct') ||
+            lowerQ.startsWith('update') ||
+            lowerQ.startsWith('actually') ||
+            lowerQ.includes('edit product') ||
+            lowerQ.includes('change product') ||
+            lowerQ.includes('update product') ||
+            lowerQ.includes('change the') ||
+            lowerQ.includes('correct the') ||
+            (answerText.toLowerCase().includes('corrected') &&
+              (lowerQ.includes('change') || lowerQ.includes('correct') || lowerQ.includes('update') || lowerQ.includes('edit')));
+
+          const isMerchantSpending = isMerchantSpendingStatement(q, state.customers);
+
+          if (rawDelId || isExplicitDelete) {
+            const cleanTarget = targetDesc
+              .replace(/^(?:please\s+)?(?:can\s+you\s+)?(?:delete|remove|void|clear)\s+(?:the\s+)?(?:product\s+|good\s+|item\s+)?/i, '')
+              .replace(/\s+(?:from\s+memory|from\s+business\s+memory|from\s+my\s+store)$/i, '')
+              .trim();
+
+            const matchedProd = matchProductFuzzy(cleanTarget, state.products);
+            if (
+              lowerQ.includes('product') ||
+              lowerQ.includes('from memory') ||
+              (matchedProd && !lowerQ.includes('transaction') && !lowerQ.includes('sale') && !lowerQ.includes('expense'))
+            ) {
+              // Delete Product intent
+              const execDel = executeBusinessAction(
+                { intent: 'DELETE_PRODUCT', productOrServiceName: cleanTarget },
+                state
+              );
+              answerText = execDel.message;
+              if (execDel.success && execDel.memoryUpdates) {
+                extractedMemories = [...extractedMemories, ...execDel.memoryUpdates];
+                calendarAction = 'Product Deleted';
+              }
+            } else if (lowerQ.includes('customer') || lowerQ.includes('debtor')) {
+              // Delete Customer intent
+              const cleanCust = targetDesc
+                .replace(/^(?:please\s+)?(?:can\s+you\s+)?(?:delete|remove|void)\s+(?:the\s+)?(?:customer\s+|debtor\s+)?/i, '')
+                .trim();
+              const execDel = executeBusinessAction(
+                { intent: 'DELETE_CUSTOMER', customerName: cleanCust },
+                state
+              );
+              answerText = execDel.message;
+              if (execDel.success && execDel.memoryUpdates) {
+                extractedMemories = [...extractedMemories, ...execDel.memoryUpdates];
+                calendarAction = 'Customer Deleted';
+              }
+            } else {
+              // Delete Transaction / Event intent
+              const targetEv = findTargetEvent(state, targetDesc, rawDelId);
+              if (targetEv) {
+                const execDel = executeBusinessAction(
+                  { intent: 'DELETE_EVENT', targetEventId: targetEv.id },
+                  state
+                );
+                if (execDel.success) {
+                  deletedEventId = targetEv.id;
+                  calendarAction = 'DELETED';
+                  calendarDate = targetEv.date;
+                  answerText = execDel.message;
+                  if (execDel.memoryUpdates) {
+                    extractedMemories = [...extractedMemories, ...execDel.memoryUpdates];
+                  }
+                } else {
+                  answerText = "I couldn't delete that transaction. Your business records remain unchanged.";
+                  deletedEventId = undefined;
+                  calendarAction = undefined;
+                }
+              } else {
+                answerText = `I couldn't find a transaction matching "${cleanTarget || targetDesc}" to delete in your business records. Your ledger remains unchanged.`;
+                deletedEventId = undefined;
+                calendarAction = undefined;
+              }
+            }
+          } else if (isExplicitEdit) {
+            // Edit / Correction intent
+            const cleanTarget = targetDesc
+              .replace(/^(?:please\s+)?(?:edit|change|update|correct)\s+(?:the\s+)?(?:product\s+|good\s+|item\s+)?/i, '')
+              .trim();
+            const matchedProd = matchProductFuzzy(cleanTarget, state.products);
+
+            if (lowerQ.includes('product') || (matchedProd && !lowerQ.includes('sale') && !lowerQ.includes('transaction'))) {
+              const amtMatch = q.match(/(?:[₦#]?\s*([0-9.,]+[km]?))/i);
+              const parsedAmt = amtMatch ? parseNairaAmount(amtMatch[1]) : null;
+              if (matchedProd && parsedAmt && parsedAmt > 0) {
+                const isCostUpdate = lowerQ.includes('cost') || lowerQ.includes('wholesale');
+                const execUp = executeBusinessAction(
+                  {
+                    intent: 'UPDATE_PRODUCT',
+                    productOrServiceName: matchedProd.name,
+                    unitPrice: isCostUpdate ? parsedAmt : undefined,
+                    totalAmount: !isCostUpdate ? parsedAmt : undefined,
+                  },
+                  state
+                );
+                answerText = execUp.message;
+                if (execUp.success && execUp.memoryUpdates) {
+                  extractedMemories = [...extractedMemories, ...execUp.memoryUpdates];
+                  calendarAction = 'Product Updated';
+                }
+              } else {
+                const corr = handleCorrectionInput(q, state);
+                if (corr) {
+                  answerText = corr.plainResponseText || answerText;
+                  if (corr.memoryUpdates) extractedMemories = [...extractedMemories, ...corr.memoryUpdates];
+                  if (corr.correctedEvent) correctedEvent = corr.correctedEvent;
+                  if (corr.targetCalendarDate) calendarDate = corr.targetCalendarDate;
+                  calendarAction = 'Product Updated';
+                }
+              }
+            } else {
+              const corr = handleCorrectionInput(q, state);
+              if (corr) {
+                answerText = corr.plainResponseText || answerText;
+                if (corr.correctedEvent) {
+                  correctedEvent = corr.correctedEvent;
+                  calendarAction = 'CORRECTED';
+                  calendarDate = corr.targetCalendarDate || corr.correctedEvent.date;
+                }
+                if (corr.deletedEventId) {
+                  deletedEventId = corr.deletedEventId;
+                  calendarAction = 'DELETED';
+                  calendarDate = corr.targetCalendarDate || getTodayDateStr();
+                }
+                if (corr.memoryUpdates) {
+                  extractedMemories = [...extractedMemories, ...corr.memoryUpdates];
+                }
+              }
+            }
+          } else if (isMerchantSpending) {
+            // "I bought so and so", "Bought fuel 5k", "I bought 30 cartons from Musa" - ALWAYS an expense, NEVER a sale!
+            const merchRes = parseMerchantExpenseOrPurchase(q, state);
+            if (merchRes) {
+              if (merchRes.createdEvent) {
+                recordedEvent = merchRes.createdEvent;
+                calendarAction = 'RECORDED';
+                calendarDate = merchRes.createdEvent.date;
+                answerText = merchRes.plainResponseText;
+              }
+              if (merchRes.memoryUpdates) {
+                extractedMemories = [...extractedMemories, ...merchRes.memoryUpdates];
+              }
+            }
+          } else {
+            const isQuestion =
+              lowerQ.startsWith('why') ||
+              lowerQ.startsWith('what') ||
+              lowerQ.startsWith('how') ||
+              lowerQ.startsWith('did') ||
+              lowerQ.startsWith('who') ||
+              lowerQ.startsWith('is ') ||
+              lowerQ.startsWith('are ') ||
+              lowerQ.includes('profit today') ||
+              lowerQ.includes('how much') ||
+              lowerQ.includes('?');
+
+            // Do not record hallucinated events on simple questions
+            if (!isQuestion) {
+              recordedEvents = json.data?.recordedEvents || json.recordedEvents || undefined;
+              recordedEvent =
+                json.data?.recordedEvent ||
+                json.recordedEvent ||
+                (recordedEvents && recordedEvents[0]) ||
+                undefined;
+              correctedEvent = json.data?.correctedEvent || json.correctedEvent || undefined;
+              calendarDate = json.data?.calendarDate || json.calendarDate || undefined;
+              calendarAction = json.data?.calendarAction || json.calendarAction || undefined;
+            }
+          }
+        }
       } else {
         // Fallback to deterministic calculated response with multi-turn context
         const detRes = answerBusinessQuestionWithMemory(q, state, newMessages);
@@ -343,7 +585,16 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         recordedEvents = detRes.createdEvents;
         recordedEvent = detRes.createdEvent || (detRes.createdEvents && detRes.createdEvents[0]) || undefined;
         correctedEvent = detRes.correctedEvent;
-        deletedEventId = detRes.deletedEventId;
+        
+        if (detRes.deletedEventId) {
+          const exists = state.events.some((e) => e.id === detRes.deletedEventId && !e.isCorrected);
+          if (exists) {
+            deletedEventId = detRes.deletedEventId;
+          } else {
+            deletedEventId = undefined;
+            answerText = "I couldn't find that transaction to delete in your business records. Your ledger remains unchanged.";
+          }
+        }
         calendarDate = detRes.targetCalendarDate;
       }
 
@@ -757,14 +1008,20 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
             <button
               type="button"
               onClick={handleVoiceToggle}
-              title={isListening ? 'Listening... tap to stop' : 'Tap to speak question'}
+              title={
+                !isVoiceSupported
+                  ? 'Voice input not supported in this browser'
+                  : isListening
+                  ? 'Listening... tap to finish'
+                  : 'Tap to speak question'
+              }
               className={`absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
                 isListening
-                  ? 'bg-red-500 text-white animate-pulse shadow-xs'
+                  ? 'bg-rose-600 text-white animate-pulse shadow-md ring-2 ring-rose-400'
                   : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
               }`}
             >
-              <Mic className="w-4 h-4" />
+              <Mic className={`w-4 h-4 ${isListening ? 'animate-bounce' : ''}`} />
             </button>
           </div>
 
@@ -779,9 +1036,26 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         </form>
 
         {isListening && (
-          <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-300 font-medium flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-red-600 animate-ping inline-block shrink-0" />
-            <span>Listening to speech...</span>
+          <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-800 dark:text-rose-200 font-medium flex items-center justify-between animate-in fade-in">
+            <div className="flex items-center space-x-2 truncate">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping inline-block shrink-0" />
+              <span className="font-semibold text-rose-900 dark:text-rose-100">
+                {interimTranscript ? `"${interimTranscript}"` : 'Listening... Speak your question or update naturally'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleVoiceToggle}
+              className="text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:underline shrink-0 ml-2"
+            >
+              Done
+            </button>
+          </div>
+        )}
+
+        {voiceError && !isListening && (
+          <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 flex items-center space-x-2 animate-in fade-in">
+            <span>{voiceError}</span>
           </div>
         )}
 

@@ -63,7 +63,7 @@ export const BetaOnboardingModal: React.FC<BetaOnboardingModalProps> = ({
                 Sales
               </span>
               <span className="font-mono text-slate-800 dark:text-slate-200">
-                "I sold 5 shirts for #30,000 cash"
+                "I sold 3 power banks to Emeka for 24k cash"
               </span>
             </div>
             <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
@@ -71,7 +71,7 @@ export const BetaOnboardingModal: React.FC<BetaOnboardingModalProps> = ({
                 Restocking
               </span>
               <span className="font-mono text-slate-800 dark:text-slate-200">
-                "Bought 20 shirts for 70k from Balogun"
+                "Bought 30 cartons from Musa at 12k each"
               </span>
             </div>
             <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200/80 dark:border-slate-700/60">
@@ -79,7 +79,7 @@ export const BetaOnboardingModal: React.FC<BetaOnboardingModalProps> = ({
                 Customer Debts
               </span>
               <span className="font-mono text-slate-800 dark:text-slate-200">
-                "David bought 2 bags of rice for 116k, paid 80k, owes 36k"
+                "David bought 5 items for 150k, paid 100k, owes 50k"
               </span>
             </div>
             <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200/80 dark:border-slate-700/60">

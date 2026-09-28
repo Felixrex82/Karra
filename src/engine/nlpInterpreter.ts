@@ -5,10 +5,51 @@ import {
   ExpenseCategory,
   MemoryUpdateItem,
   ProductMemory,
+  CustomerMemory,
 } from '../types';
 import { computeSaleMetrics, computeMultiItemTransaction, formatNaira } from './calculations';
 import { getTodayDateStr, extractDateFromText, formatDateShort } from '../utils/dateUtils';
 import { ensureEventHeadlineAndSummary } from './eventSummarizer';
+import { matchCustomerFuzzy, matchProductFuzzy, findTargetEvent } from './businessEngine';
+
+export function parseWordNumber(word: string): number | null {
+  const map: Record<string, number> = {
+    one: 1, a: 1, an: 1,
+    two: 2,
+    three: 3,
+    four: 4,
+    five: 5,
+    six: 6,
+    seven: 7,
+    eight: 8,
+    nine: 9,
+    ten: 10,
+    eleven: 11,
+    twelve: 12,
+    fifteen: 15,
+    twenty: 20,
+    thirty: 30,
+    forty: 40,
+    fifty: 50,
+    hundred: 100,
+  };
+  return map[word.toLowerCase()] || null;
+}
+
+export function levenshteinDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1];
+      else dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
 
 /**
  * Parses numeric strings like "6000", "80k", "1.5k", "150k", "₦59,000", "#58,000", "2m"
@@ -61,22 +102,24 @@ export interface ParseResult {
  * If merchant mentions a child unit (e.g. "bowl", "bottle"), returns the yield-derived unit cost.
  */
 export function resolveProductCostForUnit(
-  product: ProductMemory | undefined,
+  product: ProductMemory | Partial<ProductMemory> | { name?: string; currentCost?: number; yieldInfo?: any } | null | undefined,
   unitMentioned: string | undefined,
   state: BusinessState
 ): { unitCost: number; costBasis?: string; isEstimate?: boolean } {
   if (!product) return { unitCost: 0 };
+  const currentCost = product.currentCost || 0;
+  const prodName = product.name || '';
 
   const normUnit = (unitMentioned || '').toLowerCase().trim();
 
   // Check product's own yieldInfo
   if (product.yieldInfo) {
-    const parent = product.yieldInfo.parentUnit.toLowerCase();
-    const child = product.yieldInfo.childUnit.toLowerCase();
+    const parent = (product.yieldInfo.parentUnit || '').toLowerCase();
+    const child = (product.yieldInfo.childUnit || '').toLowerCase();
 
     // Check if bulk parent unit was sold (e.g. "bag", "bags", "carton", "cartons")
-    if (normUnit.startsWith(parent) || normUnit.includes(parent) || (parent === 'bag' && normUnit.includes('bag'))) {
-      const parentCost = product.yieldInfo.parentCost || (product.currentCost * product.yieldInfo.yieldCount);
+    if (parent && (normUnit.startsWith(parent) || normUnit.includes(parent) || (parent === 'bag' && normUnit.includes('bag')))) {
+      const parentCost = product.yieldInfo.parentCost || (currentCost * (product.yieldInfo.yieldCount || 1));
       return {
         unitCost: parentCost,
         costBasis: `Wholesale ${product.yieldInfo.parentUnit} cost: ₦${parentCost.toLocaleString()}`,
@@ -85,33 +128,35 @@ export function resolveProductCostForUnit(
     }
 
     // Check if child unit was sold (e.g. "bowl", "bowls", "bottle", "bottles")
-    if (normUnit.startsWith(child) || normUnit.includes(child)) {
+    if (child && (normUnit.startsWith(child) || normUnit.includes(child))) {
       return {
-        unitCost: product.currentCost,
-        costBasis: `Yield estimate: 1 ${product.yieldInfo.parentUnit} (${product.yieldInfo.yieldCount} ${product.yieldInfo.childUnit}s) at ₦${product.yieldInfo.parentCost.toLocaleString()}`,
+        unitCost: currentCost,
+        costBasis: `Yield estimate: 1 ${product.yieldInfo.parentUnit} (${product.yieldInfo.yieldCount} ${product.yieldInfo.childUnit}s) at ₦${(product.yieldInfo.parentCost || 0).toLocaleString()}`,
         isEstimate: product.yieldInfo.isEstimate,
       };
     }
   }
 
   // Check state.unitRelationships
-  const rel = (state.unitRelationships || []).find(
-    (r) => r.productName && r.productName.toLowerCase() === product.name.toLowerCase()
-  );
-  if (rel) {
-    const pUnit = rel.parentUnit.toLowerCase();
-    if (normUnit.startsWith(pUnit) || normUnit.includes(pUnit)) {
-      const parentCost = rel.parentCost || (product.currentCost * (rel.yieldCount || rel.ratio || 1));
-      return {
-        unitCost: parentCost,
-        costBasis: `Wholesale ${rel.parentUnit} cost: ₦${parentCost.toLocaleString()}`,
-        isEstimate: false,
-      };
+  if (prodName) {
+    const rel = (state.unitRelationships || []).find(
+      (r) => r.productName && r.productName.toLowerCase() === prodName.toLowerCase()
+    );
+    if (rel) {
+      const pUnit = rel.parentUnit.toLowerCase();
+      if (normUnit.startsWith(pUnit) || normUnit.includes(pUnit)) {
+        const parentCost = rel.parentCost || (currentCost * (rel.yieldCount || rel.ratio || 1));
+        return {
+          unitCost: parentCost,
+          costBasis: `Wholesale ${rel.parentUnit} cost: ₦${parentCost.toLocaleString()}`,
+          isEstimate: false,
+        };
+      }
     }
   }
 
   return {
-    unitCost: product.currentCost,
+    unitCost: currentCost,
     costBasis: undefined,
     isEstimate: product.yieldInfo?.isEstimate || false,
   };
@@ -146,41 +191,178 @@ export function handleCorrectionInput(input: string, state: BusinessState): Pars
   const targetDate = extractDateFromText(input) || todayStr;
 
   // A) DELETION / VOID INTENT
-  // e.g. "Delete that last sale", "Remove the duplicate transaction", "Void the 10k expense", "Delete rice sale"
+  // e.g. "Delete product rice", "Delete that transaction", "Remove customer Musa", "Delete the 10k expense"
   if (lower.includes('delete') || lower.includes('remove') || lower.includes('void')) {
-    if (lower.includes('sale') || lower.includes('transaction') || lower.includes('event') || lower.includes('expense') || lower.includes('entry') || lower.includes('rice') || lower.includes('shirt')) {
-      const activeEvents = state.events.filter((e) => !e.isCorrected);
-      // If user specified a product name (e.g. "delete the rice sale")
-      const matchedProd = matchKnownProduct(lower, state.products);
-      let targetEvent = matchedProd
-        ? activeEvents.find((e) => e.productName?.toLowerCase() === matchedProd.name.toLowerCase()) || null
-        : null;
+    // 1. Check if deleting a PRODUCT from memory
+    const cleanProdText = input
+      .replace(/^(?:please\s+)?(?:delete|remove|void|clear)\s+(?:the\s+)?(?:product\s+|good\s+|item\s+)?/i, '')
+      .replace(/\s+(?:from\s+memory|from\s+business\s+memory|from\s+my\s+store)$/i, '')
+      .trim();
 
-      if (!targetEvent && activeEvents.length > 0) {
-        targetEvent = activeEvents[0];
-      }
-
-      if (targetEvent) {
+    const matchedProd = matchKnownProduct(cleanProdText || lower, state.products);
+    if (
+      lower.includes('product') ||
+      lower.includes('from memory') ||
+      (matchedProd && !lower.includes('transaction') && !lower.includes('sale') && !lower.includes('expense') && !lower.includes('log'))
+    ) {
+      if (matchedProd) {
         return {
           isQuestion: false,
           isCorrection: true,
-          deletedEventId: targetEvent.id,
-          targetDate: targetEvent.date,
-          targetCalendarDate: targetEvent.date,
-          shouldNavigateToCalendar: true,
-          plainResponseText: `Deleted permanently: The ${targetEvent.productName || targetEvent.type} entry of ${formatNaira(targetEvent.totalRevenue || targetEvent.expenseAmount || 0)} on ${formatDateShort(targetEvent.date)} has been permanently deleted from your calendar, ledger, and all pages. Your totals now match up.`,
+          plainResponseText: `Permanently deleted product "${matchedProd.name}" from your Business Memory and removed any linked conversion rules.`,
           memoryUpdates: [
             {
-              type: 'EVENT_CORRECTION',
-              summary: `Permanently deleted ${targetEvent.type} entry (${formatNaira(targetEvent.totalRevenue || targetEvent.expenseAmount || 0)})`,
-              data: { eventId: targetEvent.id, deletedEventId: targetEvent.id, action: 'VOIDED' },
-            },
-            {
-              type: 'CALENDAR_UPDATE',
-              summary: `Calendar updated for ${formatDateShort(targetEvent.date)}`,
-              data: { date: targetEvent.date },
+              type: 'PRODUCT_DELETE' as any,
+              targetName: matchedProd.name,
+              summary: `Deleted product ${matchedProd.name} from Business Memory`,
+              data: { productId: matchedProd.id, productName: matchedProd.name },
             },
           ],
+        };
+      } else {
+        return {
+          isQuestion: false,
+          isCorrection: true,
+          plainResponseText: `I couldn't find "${cleanProdText || 'that product'}" in your Business Memory to delete. Your store records remain unchanged.`,
+        };
+      }
+    }
+
+    // 2. Check if deleting a CUSTOMER profile
+    if (lower.includes('customer') || lower.includes('debtor')) {
+      const cleanCustText = input
+        .replace(/^(?:please\s+)?(?:delete|remove|void|clear)\s+(?:the\s+)?(?:customer\s+|debtor\s+)?/i, '')
+        .trim();
+      const matchedCust = matchKnownCustomer(cleanCustText || lower, state.customers);
+      if (matchedCust) {
+        return {
+          isQuestion: false,
+          isCorrection: true,
+          plainResponseText: `Deleted customer profile for "${matchedCust.name}" from your Customer Memory bank.`,
+          memoryUpdates: [
+            {
+              type: 'CUSTOMER_DELETE' as any,
+              targetName: matchedCust.name,
+              summary: `Deleted customer profile ${matchedCust.name}`,
+              data: { customerId: matchedCust.id, customerName: matchedCust.name },
+            },
+          ],
+        };
+      } else {
+        return {
+          isQuestion: false,
+          isCorrection: true,
+          plainResponseText: `I couldn't find customer "${cleanCustText || 'profile'}" in your records to delete.`,
+        };
+      }
+    }
+
+    // 3. Deleting a TRANSACTION / EVENT
+    const targetEvent = findTargetEvent(state, input);
+
+    if (targetEvent) {
+      return {
+        isQuestion: false,
+        isCorrection: true,
+        deletedEventId: targetEvent.id,
+        targetDate: targetEvent.date,
+        targetCalendarDate: targetEvent.date,
+        shouldNavigateToCalendar: true,
+        plainResponseText: `Deleted: The ${targetEvent.productName || targetEvent.type.toLowerCase()} record of ${formatNaira(targetEvent.totalRevenue || targetEvent.expenseAmount || 0)} has been permanently removed from your ledger and calendar. Your totals and balances have been updated.`,
+        memoryUpdates: [
+          {
+            type: 'EVENT_CORRECTION',
+            summary: `Permanently deleted ${targetEvent.type} entry (${formatNaira(targetEvent.totalRevenue || targetEvent.expenseAmount || 0)})`,
+            data: { eventId: targetEvent.id, deletedEventId: targetEvent.id, action: 'VOIDED' },
+          },
+          {
+            type: 'CALENDAR_UPDATE',
+            summary: `Calendar updated for ${formatDateShort(targetEvent.date)}`,
+            data: { date: targetEvent.date },
+          },
+        ],
+      };
+    } else {
+      return {
+        isQuestion: false,
+        isCorrection: true,
+        plainResponseText: `I couldn't find that transaction to delete. Your business records remain unchanged.`,
+      };
+    }
+  }
+
+  // A2) NUMERICAL CORRECTION TO RECENT TRANSACTION:
+  // e.g. "Actually, he paid 12k", "Actually that was 25k", "Actually it wasn't five. It was eight."
+  if (lower.startsWith('actually') || lower.includes('was actually') || lower.includes('make that') || lower.includes('it wasn\'t') || lower.includes('it was')) {
+    const activeEvents = state.events.filter((e) => !e.isCorrected);
+    const targetEvent = activeEvents[0];
+    if (targetEvent) {
+      // Partial payment correction: e.g. "Actually, he paid 12k" or "He paid 12k"
+      const paidMatch = input.match(/(?:paid|he paid|she paid|gave me)\s+(?:[₦#]?\s*([0-9.,]+[km]?))/i) ||
+                        input.match(/(?:actually|no,)\s+(?:[₦#]?\s*([0-9.,]+[km]?))/i);
+      const qtyWordMatch = input.match(/(?:was|make that|quantity was|it was)\s+([a-zA-Z0-9]+)/i);
+      const parsedWordQty = qtyWordMatch ? (parseInt(qtyWordMatch[1], 10) || parseWordNumber(qtyWordMatch[1])) : null;
+
+      if (paidMatch && !parsedWordQty) {
+        const newPaid = parseNairaAmount(paidMatch[1]);
+        if (newPaid !== null) {
+          const totalRev = targetEvent.totalRevenue || 0;
+          const newCash = newPaid;
+          const newReceivable = Math.max(0, totalRev - newCash);
+
+          const corrected: BusinessEvent = ensureEventHeadlineAndSummary({
+            ...targetEvent,
+            id: `ev-corr-${Date.now()}`,
+            cashReceived: newCash,
+            receivableAdded: newReceivable,
+            correctionOfId: targetEvent.id,
+            auditTrail: [
+              ...(targetEvent.auditTrail || []),
+              { timestamp: new Date().toISOString(), action: 'PAYMENT_CORRECTION', note: `Corrected cash paid to ${formatNaira(newCash)}` },
+            ],
+          });
+
+          return {
+            isQuestion: false,
+            isCorrection: true,
+            correctedEvent: corrected,
+            targetCalendarDate: targetEvent.date,
+            plainResponseText: `Corrected: Updated cash received to ${formatNaira(newCash)}.${newReceivable > 0 && targetEvent.customerName ? ` ${targetEvent.customerName} now owes ${formatNaira(newReceivable)}.` : ''} Your records and customer balance have been updated.`,
+          };
+        }
+      } else if (parsedWordQty && parsedWordQty > 0) {
+        const newQty = parsedWordQty;
+        const oldQty = targetEvent.quantity || 1;
+        const unitPrice = targetEvent.unitSellingPrice || (targetEvent.totalRevenue ? targetEvent.totalRevenue / oldQty : 0);
+        const unitCost = targetEvent.unitCostAtTime || 0;
+        const newTotalRev = unitPrice * newQty;
+        const newTotalCost = unitCost * newQty;
+        const newGross = newTotalRev - newTotalCost;
+        const newCash = targetEvent.receivableAdded && targetEvent.receivableAdded > 0 ? (targetEvent.cashReceived || 0) : newTotalRev;
+        const newReceivable = Math.max(0, newTotalRev - newCash);
+
+        const corrected: BusinessEvent = ensureEventHeadlineAndSummary({
+          ...targetEvent,
+          id: `ev-corr-${Date.now()}`,
+          quantity: newQty,
+          totalRevenue: newTotalRev,
+          cashReceived: newCash,
+          receivableAdded: newReceivable,
+          totalCostAtTime: newTotalCost,
+          grossProfit: newGross,
+          correctionOfId: targetEvent.id,
+          auditTrail: [
+            ...(targetEvent.auditTrail || []),
+            { timestamp: new Date().toISOString(), action: 'QUANTITY_CORRECTION', note: `Corrected quantity to ${newQty}` },
+          ],
+        });
+
+        return {
+          isQuestion: false,
+          isCorrection: true,
+          correctedEvent: corrected,
+          targetCalendarDate: targetEvent.date,
+          plainResponseText: `Corrected: Updated quantity to ${newQty} ${targetEvent.unit || 'units'} of ${targetEvent.productName || 'item'} for ${formatNaira(newTotalRev)}.`,
         };
       }
     }
@@ -446,6 +628,179 @@ export function handleCorrectionInput(input: string, state: BusinessState): Pars
 }
 
 /**
+ * Distinguishes customer purchase statements ("David bought 2 shirts", "A customer bought 3 bottles") from merchant expense/purchase statements ("I bought so and so")
+ */
+export function isCustomerBuyingStatement(text: string, customers: CustomerMemory[]): boolean {
+  const lower = text.toLowerCase().trim();
+  if (
+    lower.startsWith('i bought') ||
+    lower.startsWith('we bought') ||
+    lower.startsWith('bought ') ||
+    lower.startsWith('i purchase') ||
+    lower.startsWith('i paid') ||
+    lower.startsWith('i spent') ||
+    lower.startsWith('spent ')
+  ) {
+    return false;
+  }
+
+  // Check if a known customer name is at the start or precedes bought/took
+  const startCust = matchCustomerFuzzy(lower, customers);
+  if (startCust.customer && (lower.includes('bought') || lower.includes('took') || lower.includes('collected'))) {
+    return true;
+  }
+
+  if (
+    /^(?:customer|someone|a customer|a lady|a man|a guy|a boy|a girl)\s+(?:bought|took|collected|purchased)/i.test(lower)
+  ) {
+    return true;
+  }
+
+  const nameMatch = text.match(/^([A-Za-z]+)\s+(?:bought|took|collected|purchased)/i);
+  if (nameMatch) {
+    const word = nameMatch[1].toLowerCase();
+    if (!['i', 'we', 'they', 'who', 'he', 'she', 'just', 'today', 'yesterday'].includes(word)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Checks if the statement represents merchant expenditure/purchase (outflow), never a sale.
+ */
+export function isMerchantSpendingStatement(text: string, customers: CustomerMemory[]): boolean {
+  const lower = text.toLowerCase().trim();
+  if (
+    lower.startsWith('i bought') ||
+    lower.startsWith('we bought') ||
+    lower.startsWith('bought ') ||
+    lower.startsWith('i purchase') ||
+    lower.startsWith('i spent') ||
+    lower.startsWith('spent ') ||
+    lower.startsWith('i paid') ||
+    (lower.includes('bought') && !isCustomerBuyingStatement(text, customers) && !lower.includes('paid me'))
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Parses merchant spending/purchases ("I bought so and so", "Bought fuel 5k", "I bought 30 cartons from Musa at 12k each")
+ * Always an OUTFLOW (Expense or Procurement Stock Purchase), NEVER A SALE!
+ */
+export function parseMerchantExpenseOrPurchase(input: string, state: BusinessState): ParseResult | null {
+  const lower = input.toLowerCase().trim();
+  const todayStr = getTodayDateStr();
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+
+  const isMerchantBuying = isMerchantSpendingStatement(input, state.customers);
+  if (!isMerchantBuying) return null;
+
+  const atEachMatch = input.match(/at\s+(?:[₦#]?\s*([0-9.,]+[km]?))\s+each/i);
+  const qtyMatch = input.match(/bought\s+([0-9]+)/i);
+  const qty = qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
+  let totalAmt = 0;
+
+  if (atEachMatch) {
+    const unitAmt = parseNairaAmount(atEachMatch[1]) || 0;
+    totalAmt = unitAmt * qty;
+  } else {
+    const amtMatch =
+      input.match(/(?:for|at|spent|paid)\s+(?:[₦#]?\s*([0-9.,]+[km]?))/i) ||
+      input.match(/(?:[₦#]\s*([0-9.,]+[km]?))/i) ||
+      input.match(/([0-9.,]+[km])\b/i) ||
+      input.match(/\b([0-9]{3,}[0-9.,]*)\b/) ||
+      input.match(/\s+([0-9]+)\s*$/);
+    if (amtMatch) {
+      totalAmt = parseNairaAmount(amtMatch[1]) || 0;
+    }
+  }
+
+  // Extract item description
+  const itemMatch = input.match(/(?:i\s+bought|we\s+bought|bought|i\s+spent|spent|i\s+paid|paid)\s+([^#₦0-9]+?)(?:\s+(?:for|at|from|with)\s+|\s+[₦#]|\s+[0-9]|$)/i);
+  let itemDesc = itemMatch ? itemMatch[1].trim() : '';
+  if (!itemDesc || itemDesc.length < 2) {
+    const prodMatch = matchKnownProduct(lower, state.products);
+    itemDesc = prodMatch ? prodMatch.name : 'Goods & Supplies';
+  }
+
+  const cat = detectExpenseCategory(lower + ' ' + itemDesc);
+
+  if (totalAmt > 0) {
+    const supplierMatch = matchKnownSupplier(lower, state.suppliers);
+    const supTextMatch = input.match(/from\s+([A-Za-z]+)/i);
+    const supName = supplierMatch
+      ? supplierMatch.name
+      : supTextMatch
+      ? supTextMatch[1].charAt(0).toUpperCase() + supTextMatch[1].slice(1)
+      : undefined;
+
+    const ev: BusinessEvent = {
+      id: `ev-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      date: todayStr,
+      timeStr,
+      type: 'EXPENSE',
+      expenseCategory: supName ? 'Procurement' : cat,
+      expenseAmount: totalAmt,
+      rawUserText: input,
+      systemResponseText: supName
+        ? `Recorded: Bought ${qty > 1 ? qty + ' ' : ''}${itemDesc} from ${supName} for ${formatNaira(totalAmt)} (Procurement Expense). Deducted from today's cash.`
+        : `Recorded: Spent ${formatNaira(totalAmt)} on ${itemDesc} (${cat}). Deducted from today's net operating cash.`,
+      supplierName: supName,
+      productName: itemDesc,
+      quantity: qty,
+      totalCostAtTime: totalAmt,
+      totalRevenue: 0,
+      cashReceived: 0,
+      headline: supName ? `Restocked • ${itemDesc}` : `Expense • ${cat}`,
+      summary: supName
+        ? `Purchased ${itemDesc} from ${supName} for ${formatNaira(totalAmt)}.`
+        : `Spent ${formatNaira(totalAmt)} on ${itemDesc}.`,
+    };
+
+    const finalEv = ensureEventHeadlineAndSummary(ev);
+    const memoryUpdates: MemoryUpdateItem[] = [];
+
+    if (supName) {
+      memoryUpdates.push({
+        type: 'SUPPLIER_INFO',
+        summary: `Supplier ${supName} supplied ${itemDesc} for ${formatNaira(totalAmt)}`,
+        data: { supplierName: supName, note: `Supplied ${itemDesc} for ${formatNaira(totalAmt)} on ${todayStr}` },
+      });
+    }
+
+    return {
+      isQuestion: false,
+      createdEvent: finalEv,
+      memoryUpdates: memoryUpdates.length > 0 ? memoryUpdates : undefined,
+      plainResponseText: finalEv.systemResponseText,
+    };
+  } else {
+    // Amount was not provided (e.g. "I bought so and so")
+    return {
+      isQuestion: false,
+      followUpRequired: {
+        id: `fu-${Date.now()}`,
+        prompt: `How much did you spend on ${itemDesc}?`,
+        missingField: 'EXPENSE_AMOUNT',
+        pendingEvent: {
+          rawUserText: input,
+          type: 'EXPENSE',
+          productName: itemDesc,
+          expenseCategory: cat,
+        },
+      },
+      plainResponseText: `I noted that you bought ${itemDesc}. How much did you spend on this?`,
+    };
+  }
+}
+
+/**
  * Main Interpreter: Orchestrates parsing natural language against current business memory and ledger.
  */
 export async function processNaturalInput(
@@ -529,11 +884,12 @@ export async function processNaturalInput(
   }
 
   // 2. Primary: High-Precision Natural Language Understanding via Gemini API
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000); // 8-second client timeout ensures responses comfortably under 15s
+  if (typeof window !== 'undefined' || process.env.TEST_API_URL) {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8-second client timeout ensures responses comfortably under 15s
 
-    const response = await fetch('/api/gemini/interpret', {
+      const response = await fetch('/api/gemini/interpret', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
@@ -993,6 +1349,7 @@ export async function processNaturalInput(
   } catch (err) {
     console.warn('[NLP Interpreter] Gemini interpretation fallback active:', err);
   }
+}
 
   // 3. Robust Deterministic Fallback Engine
   return parseDeterministicFallback(input, state);
@@ -1235,118 +1592,39 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
     }
   }
 
-  // 7. Supplier Purchase / Stock ("I bought 30 cartons from Musa at 12k each" - ONLY merchant buying from supplier)
-  if (
-    (lower.startsWith('i bought') || lower.includes('bought from') || lower.includes('from supplier') || matchKnownSupplier(lower, state.suppliers)) &&
-    !lower.includes('paid me') &&
-    !matchKnownCustomer(lower, state.customers)
-  ) {
-    const qtyMatch = input.match(/bought\s+([0-9]+)/i);
-    const qty = qtyMatch ? parseInt(qtyMatch[1], 10) : 1;
-    const supplierMatch = matchKnownSupplier(lower, state.suppliers);
-    const prodMatch = matchKnownProduct(lower, state.products);
-    let totalAmt = 0;
-    const atEachMatch = input.match(/at\s+(?:[₦#]?\s*([0-9.,]+[km]?))\s+each/i);
-    if (atEachMatch) {
-      const unitAmt = parseNairaAmount(atEachMatch[1]) || 0;
-      totalAmt = unitAmt * qty;
-    } else {
-      const forMatch = input.match(/for\s+(?:[₦#]?\s*([0-9.,]+[km]?))/i);
-      if (forMatch) {
-        totalAmt = parseNairaAmount(forMatch[1]) || 0;
-      }
-    }
-
-    const prodTextMatch = input.match(/bought\s+[0-9]+\s+([a-zA-Z]+)/i);
-    const supTextMatch = input.match(/from\s+([A-Za-z]+)/i);
-
-    const supName = supplierMatch
-      ? supplierMatch.name
-      : supTextMatch
-      ? supTextMatch[1].charAt(0).toUpperCase() + supTextMatch[1].slice(1)
-      : 'Supplier';
-    const prodName = prodMatch
-      ? prodMatch.name
-      : prodTextMatch
-      ? prodTextMatch[1].charAt(0).toUpperCase() + prodTextMatch[1].slice(1)
-      : 'Stock';
-
-    const ev: BusinessEvent = {
-      id: `ev-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      date: todayStr,
-      timeStr,
-      type: 'EXPENSE',
-      expenseCategory: 'Procurement',
-      expenseAmount: totalAmt,
-      rawUserText: input,
-      systemResponseText: `Recorded: Bought ${qty} ${prodName} from ${supName} for ${formatNaira(totalAmt)} (Procurement Expense). Inventory and supplier records updated.`,
-      supplierName: supName,
-      productName: prodName,
-      quantity: qty,
-      totalCostAtTime: totalAmt,
-      totalRevenue: 0,
-      cashReceived: 0,
-      headline: `Restocked • ${qty} ${prodName}`,
-      summary: `Purchased ${qty} ${prodName} from ${supName} for ${formatNaira(totalAmt)}.`,
-    };
-    const finalEv = ensureEventHeadlineAndSummary(ev);
-    const unitCost = Math.round(totalAmt / qty);
-    const memoryUpdates: MemoryUpdateItem[] = [
-      {
-        type: 'SUPPLIER_INFO',
-        summary: `Supplier ${supName} record updated for ${prodName}`,
-        data: {
-          supplierName: supName,
-          note: `Supplied ${qty} ${prodName} for ${formatNaira(totalAmt)} on ${todayStr}`,
-        },
-      },
-      {
-        type: 'PRODUCT_COST',
-        summary: `Cost of ${prodName} recorded at ${formatNaira(unitCost)} each`,
-        data: {
-          productName: prodName,
-          cost: unitCost,
-          date: todayStr,
-          note: `Stock purchase from ${supName}`,
-        },
-      },
-    ];
-    return {
-      isQuestion: false,
-      createdEvent: finalEv,
-      memoryUpdates,
-      memoryUpdate: memoryUpdates[0] as any,
-      plainResponseText: finalEv.systemResponseText,
-    };
+  // 7. MERCHANT PURCHASES & EXPENSES ("I bought so and so", "Bought fuel 5k", "I bought 30 cartons from Musa at 12k each")
+  // CRITICAL: When the merchant is buying, this is ALWAYS an OUTFLOW (Expense or Stock Purchase), NEVER A SALE!
+  const merchantSpendingResult = parseMerchantExpenseOrPurchase(input, state);
+  if (merchantSpendingResult) {
+    return merchantSpendingResult;
   }
 
-  // 8. SALES (Multi-item AND Single-item) - Evaluated BEFORE expenses!
-  // Any phrasing where customer purchases, or merchant sells, or mentions products/quantities/prices:
-  // e.g. "David bought 2 bags of rice for #130k but paid #78k", "I sold 2 bags...", "Sold 3 shirts for 6000"
-  const multiFallback = detectAndParseMultiItemSale(input, state);
+  const isMerchantBuying = isMerchantSpendingStatement(input, state.customers);
+
+  // 8. SALES (Multi-item AND Single-item) - Evaluated strictly when NOT merchant buying!
+  const multiFallback = !isMerchantBuying ? detectAndParseMultiItemSale(input, state) : null;
   if (multiFallback) return multiFallback;
 
   const isSaleStatement =
-    lower.includes('sold') ||
-    lower.includes('bought') ||
-    lower.includes('purchase') ||
-    lower.includes('paid for') ||
-    lower.includes('took') ||
-    lower.includes('collected') ||
-    lower.includes('each') ||
-    lower.includes('at #') ||
-    lower.includes('@') ||
-    matchKnownProduct(lower, state.products) !== null ||
-    matchKnownCustomer(lower, state.customers) !== null ||
-    /^[0-9]+\s*(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?)/i.test(input);
+    !isMerchantBuying &&
+    (lower.includes('sold') ||
+      isCustomerBuyingStatement(input, state.customers) ||
+      lower.includes('paid for') ||
+      (lower.includes('took') && !lower.includes('took money') && !lower.includes('took from')) ||
+      lower.includes('collected') ||
+      lower.includes('each') ||
+      lower.includes('at #') ||
+      lower.includes('@') ||
+      matchKnownProduct(lower, state.products) !== null ||
+      matchKnownCustomer(lower, state.customers) !== null ||
+      /^[0-9]+\s*(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?)/i.test(input));
 
   if (isSaleStatement) {
     const saleResult = parseSaleStatement(input, state);
     return saleResult;
   }
 
-  // 9. EXPENSES (Operating overheads ONLY - strictly evaluated when NOT a sale)
+  // 9. EXPENSES (Operating overheads)
   const isExplicitExpense =
     (lower.includes('spent') ||
       lower.startsWith('paid') ||
@@ -1365,10 +1643,8 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
       lower.includes('packaging nylon') ||
       lower.includes('levy') ||
       lower.includes('repair')) &&
-    !lower.includes('bought') &&
     !lower.includes('sold') &&
     !lower.includes('paid me') &&
-    matchKnownProduct(lower, state.products) === null &&
     matchKnownCustomer(lower, state.customers) === null;
 
   if (isExplicitExpense) {
@@ -1725,61 +2001,8 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
 }
 
 function matchKnownProduct(text: string, products: any[]) {
-  const lower = text.toLowerCase();
-  for (const p of products) {
-    const pName = p.name ? p.name.toLowerCase() : '';
-    const pUnit = p.unit ? p.unit.toLowerCase() : '';
-    if ((pName && lower.includes(pName)) || (pUnit && lower.includes(pUnit))) {
-      return p;
-    }
-  }
-
-  // Common Nigerian merchant product synonyms & aliases
-  if (
-    lower.includes('coke') ||
-    lower.includes('coca-cola') ||
-    lower.includes('fanta') ||
-    lower.includes('sprite') ||
-    lower.includes('pepsi') ||
-    lower.includes('malt') ||
-    lower.includes('soda') ||
-    lower.includes('soft drink') ||
-    lower.includes('drinks') ||
-    lower.includes('beverage') ||
-    lower.includes('water')
-  ) {
-    return products.find((p) => p.name.toLowerCase().includes('drink')) || null;
-  }
-
-  if (
-    lower.includes('rice') ||
-    lower.includes('jollof') ||
-    lower.includes('grain')
-  ) {
-    return products.find((p) => p.name.toLowerCase().includes('rice')) || null;
-  }
-
-  if (
-    lower.includes('shirt') ||
-    lower.includes('t-shirt') ||
-    lower.includes('polo') ||
-    lower.includes('top') ||
-    lower.includes('clothes')
-  ) {
-    return products.find((p) => p.name.toLowerCase().includes('shirt')) || null;
-  }
-
-  if (
-    lower.includes('shoe') ||
-    lower.includes('sneaker') ||
-    lower.includes('slipper') ||
-    lower.includes('sandal') ||
-    lower.includes('footwear')
-  ) {
-    return products.find((p) => p.name.toLowerCase().includes('shoe')) || null;
-  }
-
-  return null;
+  if (!products || products.length === 0) return null;
+  return matchProductFuzzy(text, products);
 }
 
 /**
@@ -2083,28 +2306,8 @@ export function detectAndParseMultiItemSale(input: string, state: BusinessState)
       } else {
         // Look up known selling price from Business Memory
         if (matchedProd) {
-          if (matchedProd.name.toLowerCase().includes('rice')) {
-            if (unit.startsWith('bag')) {
-              unitPrice = 65000; // Standard wholesale bag selling price in merchant rules
-              totalRev = qty * unitPrice;
-            } else {
-              unitPrice = matchedProd.normalSellingPrice || 2000;
-              totalRev = qty * unitPrice;
-            }
-          } else if (matchedProd.name.toLowerCase().includes('drink')) {
-            unitPrice = matchedProd.normalSellingPrice || 400;
-            totalRev = qty * unitPrice;
-            isRateMultiplied = true;
-          } else if (matchedProd.name.toLowerCase().includes('shirt')) {
-            unitPrice = matchedProd.normalSellingPrice || 3000;
-            totalRev = qty * unitPrice;
-          } else if (matchedProd.name.toLowerCase().includes('shoe')) {
-            unitPrice = matchedProd.normalSellingPrice || 14000;
-            totalRev = qty * unitPrice;
-          } else {
-            unitPrice = matchedProd.normalSellingPrice || 0;
-            totalRev = qty * unitPrice;
-          }
+          unitPrice = matchedProd.normalSellingPrice || 0;
+          totalRev = qty * unitPrice;
         }
       }
     }
@@ -2239,12 +2442,9 @@ export function detectAndParseMultiItemSale(input: string, state: BusinessState)
 }
 
 function matchKnownCustomer(text: string, customers: any[]) {
-  for (const c of customers) {
-    if (text.includes(c.name.toLowerCase())) {
-      return c;
-    }
-  }
-  return null;
+  if (!customers || customers.length === 0) return null;
+  const res = matchCustomerFuzzy(text, customers);
+  return res.customer;
 }
 
 function matchKnownSupplier(text: string, suppliers: any[]) {
@@ -2462,9 +2662,26 @@ export function answerBusinessQuestionWithMemory(
     };
   }
 
+  // 0a. CHECK FOR MERCHANT PURCHASES, OUTFLOWS & EXPENSES IN CHAT:
+  // e.g. "I bought so and so for 15k", "I bought fuel 5000", "Spent 10k on transport", "Paid shop rent"
+  const isMerchantExpenseOrPurchase = isMerchantSpendingStatement(question, state.customers);
+
+  if (isMerchantExpenseOrPurchase) {
+    const merchRes = parseMerchantExpenseOrPurchase(question, state);
+    if (merchRes && (merchRes.createdEvent || merchRes.createdEvents || merchRes.followUpRequired)) {
+      return {
+        answer: merchRes.plainResponseText,
+        createdEvent: merchRes.createdEvent,
+        createdEvents: merchRes.createdEvents,
+        memoryUpdates: merchRes.memoryUpdates,
+        targetCalendarDate: merchRes.targetCalendarDate || merchRes.createdEvent?.date,
+      };
+    }
+  }
+
   // 0b. CHECK FOR MULTI-ITEM SALES OR SALE STATEMENTS IN CHAT:
   // e.g. "I sold 1 bag of rice, 3 bottles of coke", "2 bags of rice at #58,000 each and 3 bottles of coke at #400 each"
-  const multiSale = detectAndParseMultiItemSale(question, state);
+  const multiSale = !isMerchantExpenseOrPurchase ? detectAndParseMultiItemSale(question, state) : null;
   if (multiSale && multiSale.createdEvents && multiSale.createdEvents.length > 0) {
     return {
       answer: multiSale.plainResponseText,
@@ -2478,13 +2695,14 @@ export function answerBusinessQuestionWithMemory(
   // 0c. CHECK FOR SINGLE SALE STATEMENTS IN CHAT:
   // e.g. "I sold 3 items at #100 each", "I sold 2 bags of rice for #58,000 each", "Sold 3 shirts for 6000"
   if (
-    lower.includes('sold') ||
-    lower.includes('bags of') ||
-    lower.includes('bowls of') ||
-    lower.includes('at #') ||
-    lower.includes('@') ||
-    lower.includes('each') ||
-    (lower.includes('bought') && !lower.includes('bought from'))
+    !isMerchantExpenseOrPurchase &&
+    (lower.includes('sold') ||
+      isCustomerBuyingStatement(question, state.customers) ||
+      lower.includes('bags of') ||
+      lower.includes('bowls of') ||
+      lower.includes('at #') ||
+      lower.includes('@') ||
+      lower.includes('each'))
   ) {
     const saleRes = parseSaleStatement(question, state);
     if (saleRes.createdEvents && saleRes.createdEvents.length > 0) {

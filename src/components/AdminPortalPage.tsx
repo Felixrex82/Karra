@@ -134,16 +134,18 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
         return;
       }
 
-      // Store authenticated admin token in session storage
+      // Store authenticated admin token in session and local storage
       if (data.token) {
         sessionStorage.setItem('karra_admin_token', data.token);
+        localStorage.setItem('karra_admin_token', data.token);
       }
 
       // 2. Authorize founder in AuthContext
       await signInAsFounder();
 
-      // 3. Persist admin session in sessionStorage
+      // 3. Persist admin session in sessionStorage and localStorage
       sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
+      localStorage.setItem(ADMIN_SESSION_KEY, 'true');
       setIsAdminAuthenticated(true);
       if (onShowToast) {
         onShowToast('Welcome, Founder! Admin dashboard unlocked.', 'success');

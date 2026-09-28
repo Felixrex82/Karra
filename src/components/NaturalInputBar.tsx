@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Send, Sparkles, Mic, HelpCircle, CheckCircle2, ChevronRight } from 'lucide-react';
+import { Send, Sparkles, Mic, HelpCircle, CheckCircle2, ChevronRight, AlertCircle } from 'lucide-react';
 import { FollowUpQuestion } from '../types';
+import { useVoiceInput } from '../hooks/useVoiceInput';
 
 interface NaturalInputBarProps {
   onSendMessage: (text: string) => Promise<void>;
@@ -16,22 +17,35 @@ export const NaturalInputBar: React.FC<NaturalInputBarProps> = ({
   isProcessing,
 }) => {
   const [inputText, setInputText] = useState('');
-  const [isListening, setIsListening] = useState(false);
-  const [filterCategory, setFilterCategory] = useState<'ALL' | 'SALES' | 'DEBT' | 'EXPENSE' | 'QUESTIONS'>('ALL');
+  const [filterCategory, setFilterCategory] = useState<'ALL' | 'SALES' | 'DEBT' | 'EXPENSE' | 'MUTATION'>('ALL');
+
+  const {
+    isListening,
+    interimTranscript,
+    errorMessage: voiceError,
+    isSupported: isVoiceSupported,
+    toggleListening,
+  } = useVoiceInput({
+    onTranscript: (spokenText) => {
+      if (spokenText.trim()) {
+        setInputText(spokenText.trim());
+      }
+    },
+  });
 
   const samplePrompts = [
-    { text: 'I sold 3 shirts for 6000.', category: 'SALES' },
-    { text: 'David bought 5 shirts for 150k but paid 100k.', category: 'SALES' },
-    { text: 'I sold 8 bowls of rice for 2k each.', category: 'SALES' },
-    { text: 'I sold 3 products for 35k instead of 50k because of the promo.', category: 'SALES' },
-    { text: 'Chuks is owing me 80k.', category: 'DEBT' },
-    { text: 'Ada paid me 40k today.', category: 'DEBT' },
-    { text: 'I spent 15k moving the goods.', category: 'EXPENSE' },
-    { text: 'Paid my shop rent 300k.', category: 'EXPENSE' },
-    { text: 'I took 50k from the business for myself.', category: 'EXPENSE' },
-    { text: 'I bought 30 cartons from Musa at 12k each.', category: 'EXPENSE' },
-    { text: 'How much did I make today?', category: 'QUESTIONS' },
-    { text: 'Who owes me money?', category: 'QUESTIONS' },
+    { text: 'I sold 3 power banks to Emeka for 24k. He paid 15k and will balance tomorrow.', category: 'SALES' },
+    { text: 'Sold 10 cartons of Indomie for 45k cash.', category: 'SALES' },
+    { text: 'Delivered 2 native outfits to Alhaji for 40k.', category: 'SALES' },
+    { text: 'Did hair braids for customer, received 15k cash.', category: 'SALES' },
+    { text: 'David still owes me 30k from last week.', category: 'DEBT' },
+    { text: 'Chuks paid 40k debt today.', category: 'DEBT' },
+    { text: 'Spent 12k on shop generator fuel.', category: 'EXPENSE' },
+    { text: 'Paid shop rent 250k.', category: 'EXPENSE' },
+    { text: 'Bought 30 cartons from Musa at 12k each.', category: 'EXPENSE' },
+    { text: 'Actually, it wasn\'t five. It was eight.', category: 'MUTATION' },
+    { text: 'Delete the second transaction.', category: 'MUTATION' },
+    { text: 'Actually, he gave me 20k.', category: 'MUTATION' },
   ];
 
   const displayedPrompts = samplePrompts.filter(
@@ -48,17 +62,6 @@ export const NaturalInputBar: React.FC<NaturalInputBarProps> = ({
 
   const handleSelectSample = (sample: string) => {
     setInputText(sample);
-  };
-
-  const handleVoiceToggle = () => {
-    setIsListening((prev) => !prev);
-    if (!isListening) {
-      // Simulate authentic merchant speech capture
-      setTimeout(() => {
-        setIsListening(false);
-        setInputText('I sold 4 shirts for 12,000 cash.');
-      }, 2400);
-    }
   };
 
   return (
@@ -122,7 +125,7 @@ export const NaturalInputBar: React.FC<NaturalInputBarProps> = ({
               placeholder={
                 pendingFollowUp
                   ? `Type your answer here (e.g. 1500)...`
-                  : `Speak or type: "Sold 3 shirts for 6000", "Chuks owes 80k"...`
+                  : `Speak or type: "Sold 3 power banks for 24k", "Chuks owes 80k"...`
               }
               disabled={isProcessing}
               className="w-full pl-3.5 sm:pl-4 pr-11 py-3 sm:py-3.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50/80 dark:bg-[#172033] hover:bg-white dark:hover:bg-[#1C273D] focus:bg-white dark:focus:bg-[#1C273D] text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 text-base sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-slate-900 dark:focus:ring-emerald-500 focus:border-transparent transition-all min-h-[48px]"
@@ -131,15 +134,21 @@ export const NaturalInputBar: React.FC<NaturalInputBarProps> = ({
             {/* Voice toggle button with mobile touch area */}
             <button
               type="button"
-              onClick={handleVoiceToggle}
-              title={isListening ? 'Listening... tap to stop' : 'Tap to speak natural update'}
+              onClick={toggleListening}
+              title={
+                !isVoiceSupported
+                  ? 'Voice input not supported in this browser'
+                  : isListening
+                  ? 'Listening... tap to finish'
+                  : 'Tap to speak your update'
+              }
               className={`absolute right-1.5 top-1/2 -translate-y-1/2 w-9 h-9 rounded-lg flex items-center justify-center transition-all ${
                 isListening
-                  ? 'bg-red-500 text-white animate-pulse shadow-xs'
+                  ? 'bg-rose-600 text-white animate-pulse shadow-md ring-2 ring-rose-400'
                   : 'text-slate-400 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-slate-200/60 dark:hover:bg-slate-700'
               }`}
             >
-              <Mic className="w-4 h-4" />
+              <Mic className={`w-4 h-4 ${isListening ? 'animate-bounce' : ''}`} />
             </button>
           </div>
 
@@ -160,10 +169,30 @@ export const NaturalInputBar: React.FC<NaturalInputBarProps> = ({
           </button>
         </div>
 
+        {/* Live voice feedback */}
         {isListening && (
-          <div className="mt-2.5 p-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-xs text-red-700 dark:text-red-300 font-medium flex items-center space-x-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-600 animate-ping inline-block shrink-0" />
-            <span>Listening to voice... (Speaking English / Nigerian pidgin)</span>
+          <div className="mt-2.5 p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-800 dark:text-rose-200 font-medium flex items-center justify-between animate-in fade-in">
+            <div className="flex items-center space-x-2 truncate">
+              <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping inline-block shrink-0" />
+              <span className="font-semibold text-rose-900 dark:text-rose-100">
+                {interimTranscript ? `"${interimTranscript}"` : 'Listening... Speak naturally in English or Nigerian Pidgin'}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={toggleListening}
+              className="text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:underline shrink-0 ml-2"
+            >
+              Tap to finish
+            </button>
+          </div>
+        )}
+
+        {/* Voice error banner */}
+        {voiceError && !isListening && (
+          <div className="mt-2.5 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 flex items-center space-x-2 animate-in fade-in">
+            <AlertCircle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+            <span>{voiceError}</span>
           </div>
         )}
       </form>
@@ -178,7 +207,7 @@ export const NaturalInputBar: React.FC<NaturalInputBarProps> = ({
 
           {/* Category tabs */}
           <div className="flex items-center space-x-1 overflow-x-auto pb-0.5 scrollbar-none text-[11px] self-start xs:self-auto">
-            {(['ALL', 'SALES', 'DEBT', 'EXPENSE'] as const).map((cat) => (
+            {(['ALL', 'SALES', 'DEBT', 'EXPENSE', 'MUTATION'] as const).map((cat) => (
               <button
                 key={cat}
                 type="button"

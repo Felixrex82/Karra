@@ -72,9 +72,9 @@ service cloud.firestore {
       allow get, list, update, delete: if isAdmin();
     }
 
-    // Invitation records: Strictly blocked from direct client read/write (Server Managed Only)
+    // Invitation records: Strictly blocked from ordinary clients, manageable by verified Admin
     match /beta_invitations/{invitationId} {
-      allow read, write: if false;
+      allow read, write: if isAdmin();
     }
 
     // Admins registry

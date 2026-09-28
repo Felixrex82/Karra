@@ -691,6 +691,46 @@ export default function App() {
               source: 'Learned from natural language',
               updatedAt: getTodayDateStr(),
             });
+          } else if (mu.type === 'PRODUCT_DELETE' || (mu.type as string) === 'DELETE_PRODUCT') {
+            const targetId = mu.data?.productId || mu.data?.id;
+            const prodName = (mu as any).targetName || mu.data?.productName || mu.data?.name;
+            const lower = prodName ? prodName.toLowerCase().trim() : '';
+
+            updatedProducts = updatedProducts.filter((p) => {
+              if (targetId && p.id === targetId) return false;
+              if (lower) {
+                const pName = p.name.toLowerCase();
+                if (pName === lower || pName.includes(lower) || lower.includes(pName)) return false;
+              }
+              return true;
+            });
+
+            updatedUnits = updatedUnits.filter((u) => {
+              if (targetId && u.id === targetId) return false;
+              if (lower && u.productName) {
+                const uName = u.productName.toLowerCase();
+                if (uName === lower || uName.includes(lower) || lower.includes(uName)) return false;
+              }
+              return true;
+            });
+          } else if (mu.type === 'CUSTOMER_DELETE' || (mu.type as string) === 'DELETE_CUSTOMER') {
+            const targetId = mu.data?.customerId || mu.data?.id;
+            const custName = (mu as any).targetName || mu.data?.customerName || mu.data?.name;
+            const lower = custName ? custName.toLowerCase().trim() : '';
+
+            updatedCustomers = updatedCustomers.filter((c) => {
+              if (targetId && c.id === targetId) return false;
+              if (lower) {
+                const cName = c.name.toLowerCase();
+                if (cName === lower || cName.includes(lower) || lower.includes(cName)) return false;
+              }
+              return true;
+            });
+          } else if (mu.type === 'EVENT_DELETE' || (mu.type as string) === 'DELETE_EVENT') {
+            const targetId = mu.data?.deletedEventId || mu.data?.eventId || mu.data?.id;
+            if (targetId) {
+              updatedEvents = updatedEvents.filter((e) => e.id !== targetId);
+            }
           }
         }
 
@@ -698,6 +738,7 @@ export default function App() {
         updatedEvents = updatedEvents.filter((ev) => !ev.isCorrected);
         updatedCustomers = reconcileCustomerBalances(updatedEvents, updatedCustomers);
 
+        isDirtyRef.current = true;
         setState((prev) => ({
           ...prev,
           events: updatedEvents,
@@ -828,6 +869,7 @@ export default function App() {
 
   // Add new product or good into Business Memory
   const handleAddProductMemory = (newProduct: ProductMemory) => {
+    isDirtyRef.current = true;
     setState((prev) => {
       const existingIdx = prev.products.findIndex(
         (p) => p.name.toLowerCase() === newProduct.name.toLowerCase()
@@ -847,6 +889,64 @@ export default function App() {
       };
     });
     showToast(`Saved ${newProduct.name} to memory (${formatNaira(newProduct.normalSellingPrice)} selling price).`, 'success');
+  };
+
+  // Delete product from Business Memory
+  const handleDeleteProduct = (productId: string, productName: string) => {
+    isDirtyRef.current = true;
+    setState((prev) => {
+      const updatedProducts = prev.products.filter(
+        (p) => p.id !== productId && p.name.toLowerCase() !== productName.toLowerCase()
+      );
+      const updatedUnits = prev.unitRelationships.filter(
+        (u) => u.productName?.toLowerCase() !== productName.toLowerCase()
+      );
+      return {
+        ...prev,
+        products: updatedProducts,
+        unitRelationships: updatedUnits,
+      };
+    });
+    showToast(`Deleted ${productName} from Business Memory.`, 'info');
+  };
+
+  // Delete customer from Customer Memory
+  const handleDeleteCustomer = (customerId: string, customerName: string) => {
+    isDirtyRef.current = true;
+    setState((prev) => {
+      const updatedCusts = prev.customers.filter(
+        (c) => c.id !== customerId && c.name.toLowerCase() !== customerName.toLowerCase()
+      );
+      return {
+        ...prev,
+        customers: updatedCusts,
+      };
+    });
+    showToast(`Deleted customer profile for ${customerName}.`, 'info');
+  };
+
+  // Delete unit relationship rule
+  const handleDeleteUnitRelationship = (unitId: string) => {
+    isDirtyRef.current = true;
+    setState((prev) => ({
+      ...prev,
+      unitRelationships: prev.unitRelationships.filter((u) => u.id !== unitId),
+    }));
+    showToast('Deleted unit conversion rule.', 'info');
+  };
+
+  // Delete business rule
+  const handleDeleteBusinessRule = (ruleId: string) => {
+    isDirtyRef.current = true;
+    setState((prev) => {
+      const updatedRules = (prev.businessRules || prev.rules || []).filter((r) => r.id !== ruleId);
+      return {
+        ...prev,
+        rules: updatedRules,
+        businessRules: updatedRules,
+      };
+    });
+    showToast('Deleted business guardrail rule.', 'info');
   };
 
   // Add unit relationship from Business Memory
@@ -954,6 +1054,7 @@ export default function App() {
       setSelectedDate(targetDate);
     }
 
+    isDirtyRef.current = true;
     setState((prev) => {
       let updatedProducts = [...prev.products];
       let updatedCustomers = [...prev.customers];
@@ -1113,27 +1214,31 @@ export default function App() {
               history: [],
             });
           }
-        } else if (m.type === 'PRODUCT_COST') {
+        } else if (m.type === 'PRODUCT_COST' || (m.type as string) === 'UPDATE_PRODUCT') {
           const prodName = m.targetName || m.data?.productName;
-          const cost = m.data?.cost;
-          if (prodName && cost) {
-            const idx = updatedProducts.findIndex(
-              (p) => p.name.toLowerCase() === prodName.toLowerCase()
-            );
+          const cost = m.data?.cost ?? m.data?.unitPrice;
+          const price = m.data?.normalSellingPrice ?? m.data?.price;
+          if (prodName) {
+            const lower = prodName.toLowerCase().trim();
+            const idx = updatedProducts.findIndex((p) => {
+              const pName = p.name.toLowerCase();
+              return pName === lower || pName.includes(lower) || lower.includes(pName);
+            });
             if (idx >= 0) {
               const prevP = updatedProducts[idx];
               updatedProducts[idx] = {
                 ...prevP,
-                previousCost: prevP.currentCost,
-                currentCost: cost,
-                costHistory: [
+                previousCost: cost !== undefined && cost > 0 ? prevP.currentCost : prevP.previousCost,
+                currentCost: cost !== undefined && cost > 0 ? cost : prevP.currentCost,
+                normalSellingPrice: price !== undefined && price > 0 ? price : prevP.normalSellingPrice,
+                costHistory: cost !== undefined && cost > 0 ? [
                   ...prevP.costHistory,
                   {
                     date: getTodayDateStr(),
                     cost,
                     reason: 'Updated from chat conversation memory',
                   },
-                ],
+                ] : prevP.costHistory,
               };
             }
           }
@@ -1141,9 +1246,11 @@ export default function App() {
           const prodName = m.targetName || m.data?.productName;
           const price = m.data?.price;
           if (prodName && price) {
-            const idx = updatedProducts.findIndex(
-              (p) => p.name.toLowerCase() === prodName.toLowerCase()
-            );
+            const lower = prodName.toLowerCase().trim();
+            const idx = updatedProducts.findIndex((p) => {
+              const pName = p.name.toLowerCase();
+              return pName === lower || pName.includes(lower) || lower.includes(pName);
+            });
             if (idx >= 0) {
               updatedProducts[idx] = {
                 ...updatedProducts[idx],
@@ -1179,6 +1286,54 @@ export default function App() {
                 notes: m.data?.note || updatedSuppliers[idx].notes,
               };
             }
+          }
+        } else if (m.type === 'PRODUCT_DELETE' || (m.type as string) === 'DELETE_PRODUCT') {
+          const targetId = m.data?.productId || m.data?.id;
+          const prodName = m.targetName || m.data?.productName || m.data?.name;
+          const lower = prodName ? prodName.toLowerCase().trim() : '';
+
+          updatedProducts = updatedProducts.filter((p) => {
+            if (targetId && p.id === targetId) return false;
+            if (lower) {
+              const pName = p.name.toLowerCase();
+              if (pName === lower || pName.includes(lower) || lower.includes(pName)) return false;
+            }
+            return true;
+          });
+
+          updatedUnits = updatedUnits.filter((u) => {
+            if (targetId && u.id === targetId) return false;
+            if (lower && u.productName) {
+              const uName = u.productName.toLowerCase();
+              if (uName === lower || uName.includes(lower) || lower.includes(uName)) return false;
+            }
+            return true;
+          });
+        } else if (m.type === 'CUSTOMER_DELETE' || (m.type as string) === 'DELETE_CUSTOMER') {
+          const targetId = m.data?.customerId || m.data?.id;
+          const custName = m.targetName || m.data?.customerName || m.data?.name;
+          const lower = custName ? custName.toLowerCase().trim() : '';
+
+          updatedCustomers = updatedCustomers.filter((c) => {
+            if (targetId && c.id === targetId) return false;
+            if (lower) {
+              const cName = c.name.toLowerCase();
+              if (cName === lower || cName.includes(lower) || lower.includes(cName)) return false;
+            }
+            return true;
+          });
+        } else if (m.type === 'RULE_DELETE' || (m.type as string) === 'DELETE_RULE' || (m.type as string) === 'FORGET_FACT') {
+          const target = (m.targetName || m.summary || m.data?.rule || '').toLowerCase();
+          if (target) {
+            updatedRules = updatedRules.filter(
+              (r) => !r.description.toLowerCase().includes(target) && r.id !== m.data?.ruleId
+            );
+            updatedProducts = updatedProducts.filter((p) => p.name.toLowerCase() !== target);
+          }
+        } else if (m.type === 'EVENT_DELETE' || (m.type as string) === 'DELETE_EVENT') {
+          const targetId = m.data?.deletedEventId || m.data?.eventId || m.data?.id;
+          if (targetId) {
+            updatedEvents = updatedEvents.filter((e) => e.id !== targetId);
           }
         }
       }
@@ -1587,8 +1742,12 @@ export default function App() {
               businessRules={state.businessRules || state.rules || []}
               onUpdateProductCost={handleUpdateProductCost}
               onAddProduct={handleAddProductMemory}
+              onDeleteProduct={handleDeleteProduct}
               onAddUnitRelationship={handleAddUnitRelationship}
+              onDeleteUnitRelationship={handleDeleteUnitRelationship}
               onUpdateCustomerBalance={handleUpdateCustomerBalance}
+              onDeleteCustomer={handleDeleteCustomer}
+              onDeleteBusinessRule={handleDeleteBusinessRule}
               onSettleCustomerDebt={handleSettleCustomerDebt}
               onShowToast={showToast}
               businessName={state.businessName}

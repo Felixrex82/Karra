@@ -267,7 +267,7 @@ export interface BusinessEvent {
 export interface FollowUpQuestion {
   id: string;
   prompt: string;
-  missingField: 'COST_PER_UNIT' | 'YIELD_COUNT' | 'PAYMENT_SPLIT' | 'CUSTOMER_NAME' | 'EXPENSE_CATEGORY';
+  missingField: 'COST_PER_UNIT' | 'YIELD_COUNT' | 'PAYMENT_SPLIT' | 'CUSTOMER_NAME' | 'EXPENSE_CATEGORY' | 'EXPENSE_AMOUNT';
   productName?: string;
   pendingEvent: Partial<BusinessEvent>;
   options?: string[];
@@ -313,13 +313,18 @@ export interface MemoryUpdateItem {
     | 'CUSTOMER_PHONE'
     | 'CUSTOMER_DEBT'
     | 'CUSTOMER_PAYMENT'
+    | 'CUSTOMER_DELETE'
     | 'PRODUCT_COST'
     | 'PRODUCT_PRICE'
+    | 'PRODUCT_DELETE'
     | 'SUPPLIER_INFO'
     | 'BUSINESS_RULE'
+    | 'RULE_DELETE'
     | 'UNIT_CONVERSION'
     | 'EVENT_CORRECTION'
+    | 'EVENT_DELETE'
     | 'CALENDAR_UPDATE'
+    | 'FORGET_FACT'
     | 'GENERAL_FACT';
   targetName?: string;
   headline?: string;
