@@ -721,8 +721,13 @@ export function parseMerchantExpenseOrPurchase(input: string, state: BusinessSta
   }
 
   // Extract item description
-  const itemMatch = input.match(/(?:i\s+bought|we\s+bought|bought|i\s+spent|spent|i\s+paid|paid)\s+([^#₦0-9]+?)(?:\s+(?:for|at|from|with)\s+|\s+[₦#]|\s+[0-9]|$)/i);
+  const itemMatch = input.match(
+    /(?:i\s+bought|we\s+bought|bought|i\s+spent|spent|i\s+paid|paid)\s+(?:[0-9]+\s+)?([^#₦0-9]+?)(?:\s+(?:for|at|from|with)\s+|\s+[₦#]|\s+[0-9]|$)/i
+  );
   let itemDesc = itemMatch ? itemMatch[1].trim() : '';
+  if (itemDesc) {
+    itemDesc = itemDesc.charAt(0).toUpperCase() + itemDesc.slice(1);
+  }
   if (!itemDesc || itemDesc.length < 2) {
     const prodMatch = matchKnownProduct(lower, state.products);
     itemDesc = prodMatch ? prodMatch.name : 'Goods & Supplies';
