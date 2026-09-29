@@ -886,6 +886,63 @@ export async function processNaturalInput(
         plainResponseText: completedEvent.systemResponseText,
       };
     }
+
+    // Resolving missing payment amount (e.g. "John paid me" followed by "5000" or "40k")
+    if (followUp.missingField === 'PAYMENT_AMOUNT' && answeredCost !== null && answeredCost > 0) {
+      const pending = followUp.pendingEvent || {};
+      const custName = followUp.customerName || pending.customerName || 'Customer';
+      const payEv: BusinessEvent = {
+        id: `ev-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        date: todayStr,
+        timeStr,
+        type: 'DEBT_PAYMENT',
+        rawUserText: pending.rawUserText ? `${pending.rawUserText} -> ${input}` : input,
+        systemResponseText: `Recorded debt payment of ${formatNaira(answeredCost)} from ${custName}. Their debt balance has been updated.`,
+        customerName: custName,
+        cashReceived: answeredCost,
+        receivableAdded: -answeredCost,
+        totalRevenue: 0,
+        grossProfit: 0,
+      };
+      return {
+        isQuestion: false,
+        createdEvent: payEv,
+        plainResponseText: payEv.systemResponseText,
+      };
+    }
+
+    // Resolving missing debt amount (e.g. "David owes me" followed by "80k")
+    if (followUp.missingField === 'DEBT_AMOUNT' && answeredCost !== null && answeredCost > 0) {
+      const pending = followUp.pendingEvent || {};
+      const custName = followUp.customerName || pending.customerName || 'Customer';
+      const debtEv: BusinessEvent = {
+        id: `ev-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        date: todayStr,
+        timeStr,
+        type: 'CUSTOMER_DEBT',
+        rawUserText: pending.rawUserText ? `${pending.rawUserText} -> ${input}` : input,
+        systemResponseText: `Recorded debt of ${formatNaira(answeredCost)} owed by ${custName}.`,
+        customerName: custName,
+        receivableAdded: answeredCost,
+        totalRevenue: 0,
+        cashReceived: 0,
+        grossProfit: 0,
+      };
+      return {
+        isQuestion: false,
+        createdEvent: debtEv,
+        plainResponseText: debtEv.systemResponseText,
+      };
+    }
+
+    // Resolving missing quantity or price (e.g. "I sold some rice" followed by "2 bags for 120k")
+    if (followUp.missingField === 'QUANTITY_AND_PRICE') {
+      const combined = `${followUp.pendingEvent?.rawUserText || followUp.productName || 'Sale'} ${input}`;
+      const resolvedSale = parseSaleStatement(combined, state);
+      return resolvedSale;
+    }
   }
 
   // 2. Primary: High-Precision Natural Language Understanding via Gemini API
@@ -932,6 +989,82 @@ export async function processNaturalInput(
     if (data.success && data.data) {
       const intent = data.data.intent;
       const interpretation = data.data.interpretationSummary;
+
+      // Handle explicit clarification requests from AI (e.g. missing amount or quantity)
+      if (data.data.requiresClarification && data.data.clarificationPrompt) {
+        return {
+          isQuestion: false,
+          followUpRequired: {
+            id: `fu-${Date.now()}`,
+            prompt: data.data.clarificationPrompt,
+            missingField: 'REQUIRED_TRANSACTION_INFO',
+            productName: data.data.productName || undefined,
+            customerName: data.data.customerName || undefined,
+            pendingEvent: {
+              rawUserText: input,
+              productName: data.data.productName || undefined,
+              customerName: data.data.customerName || undefined,
+            },
+            helperText: 'Please provide the missing details to record this transaction accurately.',
+          },
+          plainResponseText: data.data.clarificationPrompt,
+        };
+      }
+
+      // Safeguard: If AI classified as RECORD_SALE but no amounts or items provided (e.g. "I sold some rice")
+      if (
+        intent === 'RECORD_SALE' &&
+        (!data.data.totalAmount || data.data.totalAmount <= 0) &&
+        (!data.data.unitPrice || data.data.unitPrice <= 0) &&
+        (!data.data.items || data.data.items.length === 0)
+      ) {
+        const pName = data.data.productName || extractProductName(input) || 'items';
+        const promptMsg = `How many ${pName.toLowerCase()} did you sell, and for how much?`;
+        return {
+          isQuestion: false,
+          followUpRequired: {
+            id: `fu-${Date.now()}`,
+            prompt: promptMsg,
+            missingField: 'QUANTITY_AND_PRICE',
+            productName: pName,
+            customerName: data.data.customerName || undefined,
+            pendingEvent: {
+              rawUserText: input,
+              productName: pName,
+              customerName: data.data.customerName || undefined,
+              type: 'SALE',
+            },
+            helperText: 'Specify quantity and total amount or unit price to record this sale.',
+          },
+          plainResponseText: promptMsg,
+        };
+      }
+
+      // Safeguard: If AI classified as RECORD_CUSTOMER_PAYMENT but no amount was provided (e.g. "John paid me")
+      if (
+        intent === 'RECORD_CUSTOMER_PAYMENT' &&
+        (!data.data.cashPaid || data.data.cashPaid <= 0) &&
+        (!data.data.totalAmount || data.data.totalAmount <= 0)
+      ) {
+        const cName = data.data.customerName || extractCustomerName(input) || 'the customer';
+        const promptMsg = `How much did ${cName} pay you?`;
+        return {
+          isQuestion: false,
+          followUpRequired: {
+            id: `fu-${Date.now()}`,
+            prompt: promptMsg,
+            missingField: 'PAYMENT_AMOUNT',
+            customerName: cName,
+            pendingEvent: {
+              rawUserText: input,
+              customerName: cName,
+              type: 'DEBT_PAYMENT',
+            },
+            helperText: `Enter the payment amount received from ${cName} to credit their balance.`,
+          },
+          plainResponseText: promptMsg,
+        };
+      }
 
       if (intent === 'BUSINESS_QUESTION') {
         const directAnswer = answerBusinessQuestion(input, state);
@@ -1527,7 +1660,7 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
     };
   }
 
-  // 5. Customer Debt Payment ("Ada paid me 40k today", "Chuks paid 50k" - ONLY when not a product sale)
+  // 5. Customer Debt Payment ("Ada paid me 40k today", "Chuks paid 50k", "John paid me" - ONLY when not a product sale)
   const isSaleContext = lower.includes('bought') || lower.includes('sold') || lower.includes('purchase') || matchKnownProduct(lower, state.products);
   if (!isSaleContext && (lower.includes('paid me') || lower.includes('brought money') || lower.includes('cleared debt') || lower.includes('paid debt'))) {
     const custMatch = matchKnownCustomer(lower, state.customers) || extractCustomerName(input);
@@ -1559,10 +1692,29 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
         },
         plainResponseText: finalEv.systemResponseText,
       };
+    } else {
+      // Amount is missing (e.g. "John paid me") - ask for it rather than guessing or ignoring
+      const promptText = `How much did ${custName} pay you?`;
+      return {
+        isQuestion: false,
+        followUpRequired: {
+          id: `fu-${Date.now()}`,
+          prompt: promptText,
+          missingField: 'PAYMENT_AMOUNT',
+          customerName: custName,
+          pendingEvent: {
+            rawUserText: input,
+            type: 'DEBT_PAYMENT',
+            customerName: custName,
+          },
+          helperText: `Enter the amount paid by ${custName} to credit their balance.`,
+        },
+        plainResponseText: promptText,
+      };
     }
   }
 
-  // 6. Customer Debt Owed ("Chuks is owing me 80k" - ONLY when not a product sale)
+  // 6. Customer Debt Owed ("Chuks is owing me 80k", "David owes me" - ONLY when not a product sale)
   if (!isSaleContext && (lower.includes('owing') || lower.includes('owes') || lower.includes('debt'))) {
     const custMatch = matchKnownCustomer(lower, state.customers) || extractCustomerName(input);
     const custName = typeof custMatch === 'object' && custMatch !== null ? custMatch.name : (custMatch || 'Customer');
@@ -1593,6 +1745,25 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
           data: { customerName: custName, balanceAdded: amt },
         },
         plainResponseText: finalEv.systemResponseText,
+      };
+    } else {
+      // Debt amount is missing (e.g. "David owes me")
+      const promptText = `How much is ${custName} owing you?`;
+      return {
+        isQuestion: false,
+        followUpRequired: {
+          id: `fu-${Date.now()}`,
+          prompt: promptText,
+          missingField: 'DEBT_AMOUNT',
+          customerName: custName,
+          pendingEvent: {
+            rawUserText: input,
+            type: 'CUSTOMER_DEBT',
+            customerName: custName,
+          },
+          helperText: `Enter the amount owed by ${custName} to update their debt record.`,
+        },
+        plainResponseText: promptText,
       };
     }
   }
@@ -1813,6 +1984,38 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
     }
   }
 
+  // Safeguard: If no revenue or price was specified in the sale statement (e.g. "I sold some rice", "sold shirts")
+  if (totalRevenue <= 0 && unitPrice <= 0) {
+    const prodDisplayName = product ? product.name : (extractProductName(input) || 'items');
+    const unitPart = unitMentioned || (product?.unit ? product.unit : '');
+    let promptText: string;
+    if (unitPart) {
+      promptText = `How many ${unitPart}s of ${prodDisplayName.toLowerCase()} did you sell, and for how much?`;
+    } else if (prodDisplayName.toLowerCase() === 'rice') {
+      promptText = `How many bags or bowls of rice did you sell, and for how much?`;
+    } else {
+      promptText = `How many ${prodDisplayName.toLowerCase()} did you sell, and for how much?`;
+    }
+    return {
+      isQuestion: false,
+      followUpRequired: {
+        id: `fu-${Date.now()}`,
+        prompt: promptText,
+        missingField: 'QUANTITY_AND_PRICE',
+        productName: prodDisplayName,
+        customerName: customerName || undefined,
+        pendingEvent: {
+          rawUserText: input,
+          productName: prodDisplayName,
+          customerName: customerName || undefined,
+          type: 'SALE',
+        },
+        helperText: `Tell me how many you sold and the selling price or total amount to log this sale accurately.`,
+      },
+      plainResponseText: promptText,
+    };
+  }
+
   // 4. Extract Cash Paid vs Debt:
   // "he paid 100k" / "paid 90k" / "paid for 3"
   let cashReceived = totalRevenue;
@@ -1958,7 +2161,7 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
       receivableAdded,
       unitCostAtTime: 0,
       totalCostAtTime: 0,
-      grossProfit: totalRevenue,
+      grossProfit: 0,
     };
     return {
       isQuestion: false,
@@ -1983,15 +2186,22 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
     productName: prodDisplayName,
     customerName,
     quantity,
+    unit: unitMentioned || undefined,
     unitSellingPrice: unitPrice,
     totalRevenue,
     cashReceived,
     receivableAdded,
   };
 
+  const singularUnit = unitMentioned ? unitMentioned.replace(/s$/, '').toLowerCase() : '';
+  const promptSubject = (singularUnit && singularUnit !== singularName.toLowerCase())
+    ? singularUnit
+    : (singularName.toLowerCase() === 'rice' ? 'bag of rice' : singularName.toLowerCase());
+  const followUpPrompt = `How much does one ${promptSubject} normally cost you?`;
+
   const followUp: FollowUpQuestion = {
     id: `fu-${Date.now()}`,
-    prompt: `How much does one ${singularName.toLowerCase()} normally cost you?`,
+    prompt: followUpPrompt,
     missingField: 'COST_PER_UNIT',
     productName: prodDisplayName,
     pendingEvent,
@@ -2001,7 +2211,7 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
   return {
     isQuestion: false,
     followUpRequired: followUp,
-    plainResponseText: `How much does one ${singularName.toLowerCase()} normally cost you?`,
+    plainResponseText: followUpPrompt,
   };
 }
 
@@ -2482,6 +2692,23 @@ function extractCustomerName(text: string): string | undefined {
 }
 
 function extractProductName(text: string): string | undefined {
+  // 1. Check patterns like "sold some rice", "sold rice", "bought some oil"
+  const verbMatch = text.match(/(?:sold|selling|sell|bought|buy)\s+(?:some\s+|a\s+|an\s+|the\s+)?([a-zA-Z]+)/i);
+  if (verbMatch) {
+    const candidate = verbMatch[1];
+    const stopWords = ['to', 'for', 'from', 'at', 'yesterday', 'today', 'on', 'my', 'his', 'her', 'their', 'some'];
+    const units = ['bowls', 'pieces', 'pairs', 'cartons', 'bottles', 'bags', 'carton', 'bag', 'bottle', 'piece', 'bowl', 'item', 'items'];
+    if (!stopWords.includes(candidate.toLowerCase()) && !units.includes(candidate.toLowerCase())) {
+      return candidate;
+    }
+    // If it was a unit (e.g. "sold bags of rice"), capture following word
+    const ofUnitMatch = text.match(/(?:sold|bought)\s+(?:some\s+)?[a-zA-Z]+\s+(?:of\s+)?([a-zA-Z]+)/i);
+    if (ofUnitMatch && !stopWords.includes(ofUnitMatch[1].toLowerCase())) {
+      return ofUnitMatch[1];
+    }
+  }
+
+  // 2. Check numbered pattern like "3 shirts", "30 cartons of drinks"
   const match = text.match(/[0-9]+\s+([a-zA-Z]+)/);
   if (match) {
     const word = match[1];
@@ -2556,6 +2783,7 @@ export interface ConversationalResponse {
   correctedEvent?: BusinessEvent;
   deletedEventId?: string;
   targetCalendarDate?: string;
+  followUpRequired?: FollowUpQuestion;
 }
 
 /**
@@ -2710,6 +2938,12 @@ export function answerBusinessQuestionWithMemory(
       lower.includes('each'))
   ) {
     const saleRes = parseSaleStatement(question, state);
+    if (saleRes.followUpRequired) {
+      return {
+        answer: saleRes.followUpRequired.prompt,
+        followUpRequired: saleRes.followUpRequired,
+      };
+    }
     if (saleRes.createdEvents && saleRes.createdEvents.length > 0) {
       return {
         answer: saleRes.plainResponseText,
@@ -2789,6 +3023,10 @@ export function answerBusinessQuestionWithMemory(
         ],
         createdEvent: debtEvent,
       };
+    } else {
+      return {
+        answer: `How much is ${activeCustomer.name} owing you?`,
+      };
     }
   }
 
@@ -2828,6 +3066,10 @@ export function answerBusinessQuestionWithMemory(
           },
         ],
         createdEvent: payEvent,
+      };
+    } else {
+      return {
+        answer: `How much did ${activeCustomer.name} pay you?`,
       };
     }
   }
@@ -3046,20 +3288,34 @@ export function answerBusinessQuestionWithMemory(
     let sales = 0;
     let cost = 0;
     let exp = 0;
+    let hasKnownCost = false;
     for (const e of todayEvents) {
       if (e.type === 'SALE') {
         sales += e.totalRevenue || 0;
-        cost += e.totalCostAtTime || 0;
+        if (e.totalCostAtTime && e.totalCostAtTime > 0) {
+          cost += e.totalCostAtTime;
+          hasKnownCost = true;
+        }
       } else if (e.type === 'EXPENSE') {
         exp += e.expenseAmount || 0;
       }
+    }
+    if (sales === 0 && exp === 0) {
+      return {
+        answer: 'You have not recorded any sales or operating expenses for today yet.',
+      };
+    }
+    if (!hasKnownCost && sales > 0) {
+      return {
+        answer: `Today you recorded ${formatNaira(sales)} in sales and ${formatNaira(exp)} in operating expenses. Because product cost prices were not recorded for these sales, exact gross profit cannot be calculated yet without your cost of goods.`,
+      };
     }
     const gross = sales - cost;
     const net = gross - exp;
     return {
       answer: `Today you made an estimated ${formatNaira(gross)} gross profit from ${formatNaira(
         sales
-      )} in sales. After deducting ${formatNaira(exp)} in operating expenses, your net take-home for today is ${formatNaira(
+      )} in sales (cost of goods: ${formatNaira(cost)}). After deducting ${formatNaira(exp)} in operating expenses, your net take-home for today is ${formatNaira(
         net
       )}.`,
     };

@@ -79,6 +79,57 @@ async function runTests() {
   }
   console.log(`✅ TEST 3 PASSED in ${latency3}ms: Logged ₦360,000 Procurement Expense from Musa.`);
 
+  // Test 4: "John paid me" without amount triggers follow-up
+  console.log('\n▶ TEST 4: "John paid me" triggers follow-up and does NOT invent amount');
+  const res4 = await processNaturalInput('John paid me', state);
+  if (!res4.followUpRequired) {
+    throw new Error('TEST 4 FAILED: Expected followUpRequired for "John paid me"');
+  }
+  if (!res4.followUpRequired.prompt.toLowerCase().includes('how much')) {
+    throw new Error(`TEST 4 FAILED: Expected prompt to ask how much, got "${res4.followUpRequired.prompt}"`);
+  }
+  console.log(`✅ TEST 4 PASSED: Prompt -> "${res4.followUpRequired.prompt}"`);
+
+  // Test 5: Answering "John paid me" follow-up with "5000" records debt payment of 5,000
+  console.log('\n▶ TEST 5: Resolving "John paid me" follow-up with "5000"');
+  state.pendingFollowUp = res4.followUpRequired;
+  const res5 = await processNaturalInput('5000', state);
+  if (!res5.createdEvent || res5.createdEvent.type !== 'DEBT_PAYMENT') {
+    throw new Error(`TEST 5 FAILED: Expected DEBT_PAYMENT event, got ${res5.createdEvent?.type}`);
+  }
+  if (res5.createdEvent.cashReceived !== 5000) {
+    throw new Error(`TEST 5 FAILED: Expected cashReceived 5000, got ${res5.createdEvent.cashReceived}`);
+  }
+  if (res5.createdEvent.customerName !== 'John') {
+    throw new Error(`TEST 5 FAILED: Expected customerName 'John', got ${res5.createdEvent.customerName}`);
+  }
+  console.log('✅ TEST 5 PASSED: ₦5,000 debt payment recorded from John.');
+
+  // Test 6: "I sold some rice" without quantity or price triggers follow-up
+  console.log('\n▶ TEST 6: "I sold some rice" triggers follow-up and does NOT invent price or qty');
+  state.pendingFollowUp = null;
+  const res6 = await processNaturalInput('I sold some rice', state);
+  if (!res6.followUpRequired) {
+    throw new Error('TEST 6 FAILED: Expected followUpRequired for "I sold some rice"');
+  }
+  if (!res6.followUpRequired.prompt.toLowerCase().includes('rice') || !res6.followUpRequired.prompt.toLowerCase().includes('how much')) {
+    throw new Error(`TEST 6 FAILED: Expected prompt to ask for rice details, got "${res6.followUpRequired.prompt}"`);
+  }
+  console.log(`✅ TEST 6 PASSED: Prompt -> "${res6.followUpRequired.prompt}"`);
+
+  // Test 7: Resolving "I sold some rice" with "2 bags for 120k"
+  console.log('\n▶ TEST 7: Resolving rice follow-up with "2 bags for 120k"');
+  state.pendingFollowUp = res6.followUpRequired;
+  // If rice has no known cost, it will ask for cost, or if we provide cost it records
+  const res7 = await processNaturalInput('2 bags for 120k', state);
+  if (res7.followUpRequired && res7.followUpRequired.missingField === 'COST_PER_UNIT') {
+    console.log(`✅ TEST 7 PASSED: Successfully parsed 2 bags for 120k, now asking for cost: "${res7.followUpRequired.prompt}"`);
+  } else if (res7.createdEvent && res7.createdEvent.totalRevenue === 120000) {
+    console.log('✅ TEST 7 PASSED: Recorded sale with ₦120,000 revenue.');
+  } else {
+    throw new Error(`TEST 7 FAILED: Expected either cost follow-up or completed sale, got: ${JSON.stringify(res7)}`);
+  }
+
   console.log('\n🎉 ALL NLP & EXPENSE TESTS PASSED SUCCESSFULLY!');
 }
 

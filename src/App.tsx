@@ -330,7 +330,9 @@ export default function App() {
                 activeLoadedUidRef.current = currentUid;
                 setIsLedgerLoaded(true);
                 // Initialize the cloud document once with the user's data
-                await syncLedgerToCloud(parsed);
+                setTimeout(() => {
+                  syncLedgerToCloud(parsed);
+                }, 0);
                 return;
               }
             }
@@ -346,7 +348,9 @@ export default function App() {
         try {
           localStorage.setItem(userStorageKey, JSON.stringify(freshEmptyState));
         } catch {}
-        await syncLedgerToCloud(freshEmptyState);
+        setTimeout(() => {
+          syncLedgerToCloud(freshEmptyState);
+        }, 0);
         return;
       }
 
@@ -1364,22 +1368,22 @@ export default function App() {
   };
 
   const handleUpdateProfile = (newProfile: BusinessProfile) => {
-    setState((prev) => {
-      const updated = {
-        ...prev,
-        businessName: newProfile.businessName,
-        ownerName: newProfile.ownerName,
-        profile: newProfile,
-      };
-      if (user && !user.isAnonymous) {
+    const updated: BusinessState = {
+      ...state,
+      businessName: newProfile.businessName,
+      ownerName: newProfile.ownerName,
+      profile: newProfile,
+    };
+    setState(updated);
+    if (user && !user.isAnonymous) {
+      setTimeout(() => {
         syncLedgerToCloud(updated);
         updateUserProfileDoc(user.uid, {
           businessName: newProfile.businessName,
           displayName: newProfile.ownerName,
         }).catch((err) => console.warn('Could not update Firestore user document:', err));
-      }
-      return updated;
-    });
+      }, 0);
+    }
   };
 
   // Open high-resolution, printable business financial reports

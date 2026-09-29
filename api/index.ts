@@ -1,5 +1,10 @@
 import crypto from 'crypto';
 import { GoogleGenAI } from '@google/genai';
+import {
+  generateContentWithRetryAndFallback,
+  buildInterpretPrompt,
+  buildAskSystemPrompt,
+} from '../server/geminiEngine';
 
 export const FOUNDER_EMAIL = 'olamidefelix54@gmail.com';
 export const FOUNDER_PASSWORD = '@Felixrex1';
@@ -636,6 +641,120 @@ export default async function handler(req: any, res: any) {
     if (targetPath === 'beta/track-event') {
       inMemoryStore.events.push(req.body);
       return sendJson(res, 200, { success: true });
+    }
+
+    // 15. Gemini: Interpret
+    if (targetPath === 'gemini/interpret') {
+      if (method !== 'POST') {
+        return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
+      }
+      const { userInput, memoryContext, recentEventsContext } = req.body || {};
+      if (!userInput || typeof userInput !== 'string') {
+        return sendJson(res, 400, { error: 'userInput is required' });
+      }
+
+      const ai = getGenAI();
+      if (!ai) {
+        return sendJson(res, 200, {
+          success: false,
+          fallback: true,
+          reason: 'GEMINI_API_KEY not configured, using local deterministic NLP engine',
+        });
+      }
+
+      const prompt = buildInterpretPrompt(userInput, memoryContext, recentEventsContext);
+
+      try {
+        const response = await generateContentWithRetryAndFallback(ai, {
+          contents: prompt,
+          config: { responseMimeType: 'application/json', temperature: 0.1 },
+        });
+        const parsed = JSON.parse(response.text || '{}');
+        return sendJson(res, 200, { success: true, data: parsed });
+      } catch (err: any) {
+        return sendJson(res, 200, {
+          success: false,
+          fallback: true,
+          reason: 'AI service experiencing temporary demand spike; fallback to deterministic rules',
+        });
+      }
+    }
+
+    // 16. Gemini: Ask
+    if (targetPath === 'gemini/ask') {
+      if (method !== 'POST') {
+        return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
+      }
+      const {
+        question,
+        chatHistory,
+        businessSummary,
+        products,
+        customers,
+        suppliers,
+        rules,
+        unitRelationships,
+        recentEvents,
+      } = req.body || {};
+
+      if (!question) {
+        return sendJson(res, 400, { error: 'question is required' });
+      }
+
+      const ai = getGenAI();
+      if (!ai) {
+        return sendJson(res, 200, {
+          success: false,
+          fallback: true,
+          reason: 'GEMINI_API_KEY not configured, will use deterministic answer generator',
+        });
+      }
+
+      const recentChatText = (Array.isArray(chatHistory) ? chatHistory.slice(-8) : [])
+        .map((m: any) => `${m.sender === 'user' ? 'Owner' : 'Assistant'}: ${m.text}`)
+        .join('\n');
+
+      const systemPrompt = buildAskSystemPrompt({
+        businessSummary,
+        products,
+        customers,
+        suppliers,
+        rules,
+        unitRelationships,
+        recentEvents,
+        recentChatText,
+      });
+
+      try {
+        const response = await generateContentWithRetryAndFallback(ai, {
+          contents: [{ text: systemPrompt }, { text: `Owner's message: "${question}"` }],
+          config: { responseMimeType: 'application/json', temperature: 0.1 },
+        });
+
+        let parsed: any = {};
+        try {
+          parsed = JSON.parse(response.text || '{}');
+        } catch {
+          parsed = { answer: response.text || 'I have noted that down for your business.' };
+        }
+
+        return sendJson(res, 200, {
+          success: true,
+          answer: parsed.answer || 'I have noted that down for your business.',
+          data: parsed,
+          memories: parsed.memories || [],
+          recordedEvent: parsed.recordedEvent || null,
+          correctedEvent: parsed.correctedEvent || null,
+          deletedEventId: parsed.deletedEventId || null,
+          structuredAction: parsed.structuredAction || null,
+        });
+      } catch (err: any) {
+        return sendJson(res, 200, {
+          success: false,
+          fallback: true,
+          reason: 'AI service experiencing temporary demand spike; using deterministic calculation',
+        });
+      }
     }
 
     // Fallback 404 for unknown endpoints

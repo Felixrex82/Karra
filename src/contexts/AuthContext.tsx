@@ -78,8 +78,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   // Listen to Firebase Auth state
   useEffect(() => {
+    let isSubscribed = true;
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
+      if (!isSubscribed) return;
+
       if (currentUser && !currentUser.isAnonymous) {
         try {
           let profile = await fetchUserProfile(currentUser.uid);
@@ -96,19 +98,34 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
               updatedAt: new Date().toISOString(),
             };
           }
-          setUserProfile(profile);
-          setCloudSyncStatus('synced');
+          if (isSubscribed) {
+            setUser(currentUser);
+            setUserProfile(profile);
+            setTimeout(() => setCloudSyncStatus('synced'), 0);
+          }
         } catch (e) {
           console.error('Error fetching profile on auth change:', e);
+          if (isSubscribed) {
+            setUser(currentUser);
+            setTimeout(() => setCloudSyncStatus('synced'), 0);
+          }
         }
       } else {
-        setUserProfile(null);
-        setCloudSyncStatus('idle');
+        if (isSubscribed) {
+          setUser(currentUser);
+          setUserProfile(null);
+          setTimeout(() => setCloudSyncStatus('idle'), 0);
+        }
       }
-      setIsLoading(false);
+      if (isSubscribed) {
+        setIsLoading(false);
+      }
     });
 
-    return () => unsubscribe();
+    return () => {
+      isSubscribed = false;
+      unsubscribe();
+    };
   }, []);
 
   const openSignIn = useCallback(() => {
@@ -321,14 +338,16 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return false;
       }
       try {
-        setCloudSyncStatus('syncing');
+        setTimeout(() => setCloudSyncStatus('syncing'), 0);
         await saveBusinessLedger(user.uid, state);
-        setCloudSyncStatus('synced');
-        setLastSyncedAt(new Date());
+        setTimeout(() => {
+          setCloudSyncStatus('synced');
+          setLastSyncedAt(new Date());
+        }, 0);
         return true;
       } catch (err) {
         console.warn('Sync failed:', err);
-        setCloudSyncStatus('error');
+        setTimeout(() => setCloudSyncStatus('error'), 0);
         return false;
       }
     },
@@ -340,20 +359,22 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       return { status: 'not_found' };
     }
     try {
-      setCloudSyncStatus('syncing');
+      setTimeout(() => setCloudSyncStatus('syncing'), 0);
       const res = await loadBusinessLedger(user.uid);
-      if (res.status === 'found') {
-        setCloudSyncStatus('synced');
-        setLastSyncedAt(new Date());
-      } else if (res.status === 'error') {
-        setCloudSyncStatus('error');
-      } else {
-        setCloudSyncStatus('idle');
-      }
+      setTimeout(() => {
+        if (res.status === 'found') {
+          setCloudSyncStatus('synced');
+          setLastSyncedAt(new Date());
+        } else if (res.status === 'error') {
+          setCloudSyncStatus('error');
+        } else {
+          setCloudSyncStatus('idle');
+        }
+      }, 0);
       return res;
     } catch (err) {
       console.warn('Fetch cloud ledger failed:', err);
-      setCloudSyncStatus('error');
+      setTimeout(() => setCloudSyncStatus('error'), 0);
       return { status: 'error', error: err };
     }
   }, [user]);

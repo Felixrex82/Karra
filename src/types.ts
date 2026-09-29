@@ -267,8 +267,19 @@ export interface BusinessEvent {
 export interface FollowUpQuestion {
   id: string;
   prompt: string;
-  missingField: 'COST_PER_UNIT' | 'YIELD_COUNT' | 'PAYMENT_SPLIT' | 'CUSTOMER_NAME' | 'EXPENSE_CATEGORY' | 'EXPENSE_AMOUNT';
+  missingField:
+    | 'COST_PER_UNIT'
+    | 'YIELD_COUNT'
+    | 'PAYMENT_SPLIT'
+    | 'CUSTOMER_NAME'
+    | 'EXPENSE_CATEGORY'
+    | 'EXPENSE_AMOUNT'
+    | 'PAYMENT_AMOUNT'
+    | 'DEBT_AMOUNT'
+    | 'QUANTITY_AND_PRICE'
+    | 'REQUIRED_TRANSACTION_INFO';
   productName?: string;
+  customerName?: string;
   pendingEvent: Partial<BusinessEvent>;
   options?: string[];
   helperText?: string;
