@@ -648,7 +648,7 @@ export default async function handler(req: any, res: any) {
       if (method !== 'POST') {
         return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
       }
-      const { userInput, memoryContext, recentEventsContext } = req.body || {};
+      const { userInput, memoryContext, recentEventsContext, conversationState } = req.body || {};
       if (!userInput || typeof userInput !== 'string') {
         return sendJson(res, 400, { error: 'userInput is required' });
       }
@@ -662,7 +662,7 @@ export default async function handler(req: any, res: any) {
         });
       }
 
-      const prompt = buildInterpretPrompt(userInput, memoryContext, recentEventsContext);
+      const prompt = buildInterpretPrompt(userInput, memoryContext, recentEventsContext, conversationState);
 
       try {
         const response = await generateContentWithRetryAndFallback(ai, {

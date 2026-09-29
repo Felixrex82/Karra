@@ -264,11 +264,49 @@ export interface BusinessEvent {
   auditTrail?: AuditRecord[];
 }
 
+export interface TransactionDraft {
+  intent?: 'sale' | 'expense' | 'purchase' | 'customer_payment' | 'customer_debt';
+  productName?: string;
+  resolvedProductId?: string;
+  quantity?: number;
+  unit?: string;
+  unitPrice?: number;
+  totalAmount?: number;
+  cashReceived?: number;
+  receivableAdded?: number;
+  customerName?: string;
+  resolvedCustomerId?: string;
+  supplierName?: string;
+  expenseCategory?: string;
+  expenseAmount?: number;
+  isPromotional?: boolean;
+  normalPrice?: number;
+  unitCost?: number;
+  targetDate?: string;
+  isCorrection?: boolean;
+  notes?: string;
+}
+
+export interface ConversationState {
+  activeIntent: string | null;
+  transactionDraft: TransactionDraft | null;
+  missingInformation: string[];
+  lastEntityFocus?: {
+    type: 'product' | 'customer' | 'supplier' | 'event';
+    id?: string;
+    name: string;
+  } | null;
+  recentTurns?: Array<{ sender: 'user' | 'assistant'; text: string }>;
+  clarificationOptions?: string[];
+  lastPrompt?: string;
+}
+
 export interface FollowUpQuestion {
   id: string;
   prompt: string;
   missingField:
     | 'COST_PER_UNIT'
+    | 'SELLING_PRICE'
     | 'YIELD_COUNT'
     | 'PAYMENT_SPLIT'
     | 'CUSTOMER_NAME'
@@ -277,10 +315,13 @@ export interface FollowUpQuestion {
     | 'PAYMENT_AMOUNT'
     | 'DEBT_AMOUNT'
     | 'QUANTITY_AND_PRICE'
+    | 'AMBIGUOUS_CHOICE'
+    | 'CLARIFICATION'
     | 'REQUIRED_TRANSACTION_INFO';
   productName?: string;
   customerName?: string;
   pendingEvent: Partial<BusinessEvent>;
+  conversationState?: ConversationState;
   options?: string[];
   helperText?: string;
 }
@@ -374,6 +415,7 @@ export interface BusinessState {
   businessRules?: BusinessRule[];
   chatHistory: ChatMessage[];
   pendingFollowUp: FollowUpQuestion | null;
+  conversationState?: ConversationState | null;
   pulseInsights?: BusinessPulseItem[];
   profile?: BusinessProfile;
 }

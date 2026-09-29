@@ -6,6 +6,7 @@ import {
   MemoryUpdateItem,
   ProductMemory,
   CustomerMemory,
+  ConversationState,
 } from '../types';
 import { computeSaleMetrics, computeMultiItemTransaction, formatNaira } from './calculations';
 import { getTodayDateStr, extractDateFromText, formatDateShort } from '../utils/dateUtils';
@@ -93,6 +94,7 @@ export interface ParseResult {
     data: any;
   };
   memoryUpdates?: MemoryUpdateItem[];
+  conversationState?: ConversationState | null;
   plainResponseText: string;
 }
 
@@ -806,6 +808,134 @@ export function parseMerchantExpenseOrPurchase(input: string, state: BusinessSta
 }
 
 /**
+ * Detects if the user is establishing or teaching reusable business knowledge
+ * (e.g. "I now sell this dress for 35k", "My normal delivery charge is 5k", "One bag of rice costs me 59k")
+ */
+export function detectAndLearnBusinessMemory(
+  input: string,
+  state: BusinessState
+): ParseResult | null {
+  const todayStr = getTodayDateStr();
+
+  // 1. Selling price teaching: "I now sell this dress for 35k" / "Normal selling price for kaftan is 35k"
+  const sellMatch = input.match(/(?:i now sell|normal selling price of|selling price for|we now sell|we sell)\s+([a-zA-Z\s]+?)\s+(?:for|at|is)\s+([₦#]?[0-9.,]+[km]?)/i);
+  if (sellMatch) {
+    const prodName = sellMatch[1].replace(/^(?:this|the|our|my)\s+/i, '').trim();
+    const price = parseNairaAmount(sellMatch[2]);
+    if (price && price > 0) {
+      const memUpdate: MemoryUpdateItem = {
+        type: 'PRODUCT_PRICE',
+        summary: `Established normal price of ${prodName}: ${formatNaira(price)}`,
+        data: {
+          productName: prodName,
+          price,
+          normalSellingPrice: price,
+          date: todayStr,
+          note: 'Owner established new selling price rule',
+        },
+      };
+      return {
+        isQuestion: false,
+        memoryUpdates: [memUpdate],
+        memoryUpdate: memUpdate as any,
+        plainResponseText: `Understood. I have updated Business Memory: normal selling price for ${prodName} is now ${formatNaira(price)}.`,
+      };
+    }
+  }
+
+  // 2. Cost teaching: "One bag of rice costs me 59k" / "Cost of rice is 59k"
+  const costMatch = input.match(/(?:one bag of|bag of|cost of|costs me)\s+([a-zA-Z\s]+?)\s+(?:costs me|costs|is)\s+([₦#]?[0-9.,]+[km]?)/i);
+  if (costMatch) {
+    const prodName = costMatch[1].replace(/^(?:this|the|our|my)\s+/i, '').trim();
+    const cost = parseNairaAmount(costMatch[2]);
+    if (cost && cost > 0) {
+      const memUpdate: MemoryUpdateItem = {
+        type: 'PRODUCT_COST',
+        summary: `Recorded wholesale cost of ${prodName}: ${formatNaira(cost)}`,
+        data: {
+          productName: prodName,
+          cost,
+          date: todayStr,
+          note: 'Owner established new cost rule',
+        },
+      };
+      return {
+        isQuestion: false,
+        memoryUpdates: [memUpdate],
+        memoryUpdate: memUpdate as any,
+        plainResponseText: `Understood. Saved to Business Memory: cost of ${prodName} is now ${formatNaira(cost)}.`,
+      };
+    }
+  }
+
+  // 3. Operational rule: "My normal delivery charge is 5k"
+  const ruleMatch = input.match(/(?:my normal|our normal|normal)\s+([a-zA-Z\s]+?)\s+(?:charge\s+)?(?:is|costs)\s+([₦#]?[0-9.,]+[km]?)/i);
+  if (ruleMatch) {
+    const ruleSubject = ruleMatch[1].trim();
+    const ruleAmt = parseNairaAmount(ruleMatch[2]);
+    if (ruleAmt && ruleAmt > 0) {
+      const memUpdate: MemoryUpdateItem = {
+        type: 'BUSINESS_RULE',
+        summary: `Normal ${ruleSubject} established as ${formatNaira(ruleAmt)}`,
+        data: {
+          rule: `Normal ${ruleSubject} is ${formatNaira(ruleAmt)}`,
+          category: 'Operations',
+        },
+      };
+      return {
+        isQuestion: false,
+        memoryUpdates: [memUpdate],
+        memoryUpdate: memUpdate as any,
+        plainResponseText: `Noted in Business Rules: normal ${ruleSubject} is set to ${formatNaira(ruleAmt)}.`,
+      };
+    }
+  }
+
+  // 4. Supplier: "Musa is my fabric supplier"
+  const supMatch = input.match(/([a-zA-Z]+)\s+is\s+(?:my|our)\s+([a-zA-Z\s]+?)\s*supplier/i);
+  if (supMatch) {
+    const supName = supMatch[1].trim();
+    const supCategory = supMatch[2].trim();
+    const memUpdate: MemoryUpdateItem = {
+      type: 'SUPPLIER_INFO',
+      summary: `Supplier ${supName} recorded (${supCategory})`,
+      data: {
+        supplierName: supName,
+        note: `${supCategory} supplier`,
+      },
+    };
+    return {
+      isQuestion: false,
+      memoryUpdates: [memUpdate],
+      memoryUpdate: memUpdate as any,
+      plainResponseText: `Saved ${supName} as your ${supCategory} supplier in Business Memory.`,
+    };
+  }
+
+  // 5. Customer: "John is a regular customer"
+  const custMatch = input.match(/([a-zA-Z]+)\s+is\s+(?:a|my|our)?\s*(?:regular|vip|new)?\s*customer/i);
+  if (custMatch) {
+    const custName = custMatch[1].trim();
+    const memUpdate: MemoryUpdateItem = {
+      type: 'CUSTOMER_NOTE',
+      summary: `Customer ${custName} recorded in memory`,
+      data: {
+        customerName: custName,
+        note: 'Regular customer',
+      },
+    };
+    return {
+      isQuestion: false,
+      memoryUpdates: [memUpdate],
+      memoryUpdate: memUpdate as any,
+      plainResponseText: `Saved ${custName} as a customer in Business Memory.`,
+    };
+  }
+
+  return null;
+}
+
+/**
  * Main Interpreter: Orchestrates parsing natural language against current business memory and ledger.
  */
 export async function processNaturalInput(
@@ -824,10 +954,98 @@ export async function processNaturalInput(
     return correctionResult;
   }
 
+  // 0b. Check if owner is establishing new reusable business knowledge/memory:
+  const learningResult = detectAndLearnBusinessMemory(input, state);
+  if (learningResult) {
+    return learningResult;
+  }
+
   // 1. Check if this is answering a pending follow-up question
   if (state.pendingFollowUp) {
     const followUp = state.pendingFollowUp;
     const answeredCost = parseNairaAmount(input);
+
+    // Resolving ambiguous choice (e.g. "Ankara" or "Corporate Dress")
+    if (followUp.missingField === 'AMBIGUOUS_CHOICE' && followUp.options) {
+      const picked = followUp.options.find((opt) =>
+        lower.includes(opt.toLowerCase()) || opt.toLowerCase().includes(lower)
+      );
+      if (picked) {
+        const pending = followUp.pendingEvent || {};
+        const combined = `I sold ${pending.quantity || 1} ${picked}`;
+        return parseSaleStatement(combined, state);
+      }
+    }
+
+    // Resolving missing selling price (e.g. "I sold 3 kaftans" followed by "35,000")
+    if (followUp.missingField === 'SELLING_PRICE') {
+      // Check if user answered with a full compound phrase like "2 bags for 120k", "2 for 60k", or provided a new quantity/unit
+      const isCompoundAnswer = /[0-9]+\s*(?:bags?|bowls?|cartons?|items?|pieces?|shirts?|dresses?|units?|packs?)/i.test(input) ||
+        /\b(?:for|at)\s*[₦#]?[0-9]+/i.test(input);
+      if (isCompoundAnswer) {
+        const combined = `${followUp.pendingEvent?.rawUserText || followUp.productName || 'Sale'} ${input}`;
+        return parseSaleStatement(combined, state);
+      }
+
+      if (answeredCost !== null && answeredCost > 0) {
+        const pending = followUp.pendingEvent || {};
+        const prodName = followUp.productName || pending.productName || 'Items';
+        const qty = pending.quantity || 1;
+        const totalRev = answeredCost * qty;
+        const custName = followUp.customerName || pending.customerName;
+
+      // Check if product has cost in memory
+      const matchedProd = state.products.find((p) => p.name.toLowerCase() === prodName.toLowerCase());
+      const costRes = resolveProductCostForUnit(matchedProd, undefined, state);
+      const unitCost = costRes.unitCost || 0;
+      const totalCost = unitCost * qty;
+      const hasCost = unitCost > 0;
+      const grossProfit = hasCost ? totalRev - totalCost : 0;
+
+      const completedEvent: BusinessEvent = ensureEventHeadlineAndSummary({
+        id: `ev-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        date: todayStr,
+        timeStr,
+        type: 'SALE',
+        rawUserText: pending.rawUserText ? `${pending.rawUserText} -> ${input}` : input,
+        systemResponseText: `Got it. Recorded sale of ${qty} ${prodName.toLowerCase()} for ${formatNaira(totalRev)} (${formatNaira(answeredCost)} each). I've saved ${formatNaira(answeredCost)} as your normal selling price in Business Memory.`,
+        productName: prodName,
+        customerName: custName,
+        quantity: qty,
+        unitSellingPrice: answeredCost,
+        totalRevenue: totalRev,
+        cashReceived: totalRev,
+        receivableAdded: 0,
+        unitCostAtTime: unitCost,
+        totalCostAtTime: totalCost,
+        grossProfit: hasCost ? grossProfit : 0,
+        costIsEstimate: costRes.isEstimate,
+      });
+
+      const memoryUpdates: MemoryUpdateItem[] = [
+        {
+          type: 'PRODUCT_PRICE',
+          summary: `Normal selling price of ${prodName} recorded as ${formatNaira(answeredCost)}`,
+          data: {
+            productName: prodName,
+            price: answeredCost,
+            normalSellingPrice: answeredCost,
+            date: todayStr,
+            note: 'Learned normal selling price from owner answer during sale',
+          },
+        },
+      ];
+
+      return {
+        isQuestion: false,
+        createdEvent: completedEvent,
+        memoryUpdates,
+        memoryUpdate: memoryUpdates[0] as any,
+        plainResponseText: completedEvent.systemResponseText,
+      };
+    }
+  }
 
     if (followUp.missingField === 'COST_PER_UNIT' && answeredCost !== null && answeredCost > 0) {
       const pending = followUp.pendingEvent;
@@ -1878,6 +2096,36 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
   const customer = matchKnownCustomer(lower, state.customers);
   const customerName = customer ? customer.name : extractCustomerName(input);
 
+  // Check product ambiguity (e.g. user says "I sold a dress" and there is "Ankara Dress" and "Corporate Dress")
+  const extractedProd = extractProductName(input) || '';
+  if (extractedProd) {
+    const normExt = extractedProd.toLowerCase().replace(/s$/, '');
+    const candidateMatches = state.products.filter((p) => {
+      const pNorm = p.name.toLowerCase();
+      return pNorm.includes(normExt) || pNorm.split(' ').includes(normExt);
+    });
+    if (candidateMatches.length > 1 && !candidateMatches.some((p) => lower.includes(p.name.toLowerCase()))) {
+      const names = candidateMatches.map((c) => c.name).join(' or ');
+      const promptMsg = `Which ${extractedProd.toLowerCase()} do you mean — ${names}?`;
+      return {
+        isQuestion: false,
+        followUpRequired: {
+          id: `fu-${Date.now()}`,
+          prompt: promptMsg,
+          missingField: 'AMBIGUOUS_CHOICE',
+          options: candidateMatches.map((c) => c.name),
+          pendingEvent: {
+            rawUserText: input,
+            quantity: 1,
+            type: 'SALE',
+          },
+          helperText: 'Select or reply with the exact product name.',
+        },
+        plainResponseText: promptMsg,
+      };
+    }
+  }
+
   // Extract target date from text or default to today
   const targetDate = extractDateFromText(input) || todayStr;
   const shouldNavigateToCalendar =
@@ -1984,36 +2232,61 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
     }
   }
 
-  // Safeguard: If no revenue or price was specified in the sale statement (e.g. "I sold some rice", "sold shirts")
+  // Safeguard: If no revenue or price was specified in the sale statement (e.g. "I sold some rice", "I sold 2 dresses", "sold shirts")
   if (totalRevenue <= 0 && unitPrice <= 0) {
-    const prodDisplayName = product ? product.name : (extractProductName(input) || 'items');
-    const unitPart = unitMentioned || (product?.unit ? product.unit : '');
-    let promptText: string;
-    if (unitPart) {
-      promptText = `How many ${unitPart}s of ${prodDisplayName.toLowerCase()} did you sell, and for how much?`;
-    } else if (prodDisplayName.toLowerCase() === 'rice') {
-      promptText = `How many bags or bowls of rice did you sell, and for how much?`;
+    if (product && product.normalSellingPrice && product.normalSellingPrice > 0) {
+      // ACTIVE MEMORY RESOLVES PRICE AUTOMATICALLY!
+      unitPrice = product.normalSellingPrice;
+      totalRevenue = unitPrice * quantity;
     } else {
-      promptText = `How many ${prodDisplayName.toLowerCase()} did you sell, and for how much?`;
-    }
-    return {
-      isQuestion: false,
-      followUpRequired: {
-        id: `fu-${Date.now()}`,
-        prompt: promptText,
-        missingField: 'QUANTITY_AND_PRICE',
-        productName: prodDisplayName,
-        customerName: customerName || undefined,
-        pendingEvent: {
-          rawUserText: input,
+      const prodDisplayName = product ? product.name : (extractProductName(input) || 'items');
+      const isKnownNoun = prodDisplayName.toLowerCase() !== 'items' && prodDisplayName.toLowerCase() !== 'item';
+      const singularName = prodDisplayName.replace(/s$/i, '');
+
+      const hasExplicitQuantity = /[0-9]+/.test(input) || /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(input);
+      const isUncountable = ['rice', 'beans', 'garri', 'fuel', 'oil', 'flour', 'sugar', 'cement'].includes(prodDisplayName.toLowerCase());
+
+      let promptText: string;
+      let missingField: 'SELLING_PRICE' | 'QUANTITY_AND_PRICE';
+
+      if (isUncountable) {
+        promptText = `How many bags or bowls of ${prodDisplayName.toLowerCase()} did you sell, and for how much?`;
+        missingField = 'QUANTITY_AND_PRICE';
+      } else if (hasExplicitQuantity && isKnownNoun) {
+        promptText = `How much do you normally sell one ${singularName.toLowerCase()} for?`;
+        missingField = 'SELLING_PRICE';
+      } else {
+        const unitPart = unitMentioned || (product?.unit ? product.unit : '');
+        if (unitPart) {
+          promptText = `How many ${unitPart}s of ${prodDisplayName.toLowerCase()} did you sell, and for how much?`;
+        } else {
+          promptText = `How many ${prodDisplayName.toLowerCase()} did you sell, and for how much?`;
+        }
+        missingField = 'QUANTITY_AND_PRICE';
+      }
+
+      return {
+        isQuestion: false,
+        followUpRequired: {
+          id: `fu-${Date.now()}`,
+          prompt: promptText,
+          missingField,
           productName: prodDisplayName,
           customerName: customerName || undefined,
-          type: 'SALE',
+          pendingEvent: {
+            rawUserText: input,
+            productName: prodDisplayName,
+            customerName: customerName || undefined,
+            quantity,
+            type: 'SALE',
+          },
+          helperText: isKnownNoun
+            ? `Tell me the normal selling price. I'll calculate your total and remember it for future sales.`
+            : `Tell me how many you sold and the selling price or total amount to log this sale accurately.`,
         },
-        helperText: `Tell me how many you sold and the selling price or total amount to log this sale accurately.`,
-      },
-      plainResponseText: promptText,
-    };
+        plainResponseText: promptText,
+      };
+    }
   }
 
   // 4. Extract Cash Paid vs Debt:

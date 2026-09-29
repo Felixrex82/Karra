@@ -500,10 +500,11 @@ export default function App() {
         showToast(result.questionAnswer || result.plainResponseText, 'info');
         setActiveTab('questions');
       } else if (result.followUpRequired) {
-        // Intelligent Follow-up question triggered (e.g. unknown product cost)
+        // Intelligent Follow-up question triggered (e.g. unknown product cost or missing info)
         setState((prev) => ({
           ...prev,
           pendingFollowUp: result.followUpRequired || null,
+          conversationState: result.conversationState || result.followUpRequired?.conversationState || prev.conversationState || null,
         }));
         showToast(result.followUpRequired.prompt, 'info');
       } else {
@@ -751,6 +752,7 @@ export default function App() {
           suppliers: updatedSuppliers,
           unitRelationships: updatedUnits,
           pendingFollowUp: null, // clear pending follow-up if resolved
+          conversationState: null, // clear active temporary conversation state
         }));
 
         showToast(result.plainResponseText, 'success');
