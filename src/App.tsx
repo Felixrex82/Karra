@@ -497,6 +497,7 @@ export default function App() {
 
       if (result.isQuestion) {
         // If user asked a question, route to Questions tab or show toast with direct answer
+        setState((prev) => ({ ...prev, pendingFollowUp: null, conversationState: null }));
         showToast(result.questionAnswer || result.plainResponseText, 'info');
         setActiveTab('questions');
       } else if (result.followUpRequired) {

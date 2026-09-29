@@ -231,6 +231,58 @@ async function runTests() {
   }
   console.log('✅ TEST 11 PASSED: Exactly 2 native outfits logged to Alhaji for ₦40,000 (Cost: ₦34,600, Gross Profit: ₦5,400).');
 
+  // Test 12: Interruption of follow-up by a brand new transaction does NOT corrupt or swallow input
+  console.log('\n▶ TEST 12: Starting new transaction while follow-up is pending supersedes follow-up and logs sale');
+  state.pendingFollowUp = null;
+  const resFollowUp = await processNaturalInput('I sold 3 kaftans', state);
+  if (!resFollowUp.followUpRequired) {
+    throw new Error('TEST 12 FAILED: Expected follow-up for "I sold 3 kaftans"');
+  }
+  state.pendingFollowUp = resFollowUp.followUpRequired;
+
+  // Now user says "delivered 2 outfits to Alhaji for 40k" instead of answering cost
+  const res12 = await processNaturalInput('delivered 2 outfits to Alhaji for 40k', state);
+  if (!res12.createdEvent) {
+    throw new Error(`TEST 12 FAILED: Expected createdEvent for delivered 2 outfits, got: ${JSON.stringify(res12)}`);
+  }
+  if (res12.createdEvent.quantity !== 2) {
+    throw new Error(`TEST 12 FAILED: Expected quantity 2, got ${res12.createdEvent.quantity}`);
+  }
+  if (res12.createdEvent.customerName !== 'Alhaji') {
+    throw new Error(`TEST 12 FAILED: Expected customerName 'Alhaji', got '${res12.createdEvent.customerName}'`);
+  }
+  if (res12.createdEvent.totalRevenue !== 40000) {
+    throw new Error(`TEST 12 FAILED: Expected totalRevenue 40000, got ${res12.createdEvent.totalRevenue}`);
+  }
+  console.log('✅ TEST 12 PASSED: Pending follow-up was superseded cleanly; 2 outfits logged to Alhaji for ₦40,000.');
+
+  // Test 13: Delivery to new customer with unlisted product records immediately without blocking
+  console.log('\n▶ TEST 13: Fresh delivery with unlisted product records immediately without cost obstruction');
+  state.pendingFollowUp = null;
+  const res13 = await processNaturalInput('delivered 2 outfits to Alhaji for 40k', state);
+  if (!res13.createdEvent) {
+    throw new Error(`TEST 13 FAILED: Expected createdEvent, got: ${JSON.stringify(res13)}`);
+  }
+  if (res13.createdEvent.quantity !== 2) {
+    throw new Error(`TEST 13 FAILED: Expected quantity 2, got ${res13.createdEvent.quantity}`);
+  }
+  if (res13.createdEvent.customerName !== 'Alhaji') {
+    throw new Error(`TEST 13 FAILED: Expected customerName 'Alhaji', got '${res13.createdEvent.customerName}'`);
+  }
+  console.log('✅ TEST 13 PASSED: Recorded delivery of 2 outfits to Alhaji for ₦40,000 without getting blocked.');
+
+  // Test 14: User says "cancel" to dismiss follow-up
+  console.log('\n▶ TEST 14: User says "cancel" to clear active follow-up');
+  state.pendingFollowUp = resFollowUp.followUpRequired;
+  const res14 = await processNaturalInput('cancel', state);
+  if (res14.createdEvent) {
+    throw new Error('TEST 14 FAILED: Cancel should not create event');
+  }
+  if (!res14.plainResponseText.toLowerCase().includes('cancel')) {
+    throw new Error(`TEST 14 FAILED: Expected cancel confirmation, got "${res14.plainResponseText}"`);
+  }
+  console.log('✅ TEST 14 PASSED: Follow-up cancelled cleanly.');
+
   console.log('\n🎉 ALL NLP & EXPENSE TESTS PASSED SUCCESSFULLY!');
 }
 

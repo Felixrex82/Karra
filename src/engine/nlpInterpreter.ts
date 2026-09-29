@@ -1019,6 +1019,51 @@ export function detectAndLearnBusinessMemory(
 }
 
 /**
+ * Helper to determine if an input text represents a brand-new transaction, inquiry, or cancellation
+ * rather than an answer to an existing pending follow-up question.
+ */
+function isNewTransactionOrIntent(input: string): boolean {
+  const lower = input.toLowerCase().trim();
+  // Cancellation commands
+  if (/^(?:cancel|nevermind|never mind|forget it|stop|ignore|clear|no|leave it|skip)\b/i.test(lower)) {
+    return true;
+  }
+  // Business questions
+  if (
+    lower.includes('?') ||
+    isBusinessQuestion(lower) ||
+    /^(?:what|how|who|which|where|is there|can i|tell me)\b/i.test(lower)
+  ) {
+    return true;
+  }
+  // Fulfillment / delivery verbs with quantity or details (e.g. "delivered 2 outfits to Alhaji for 40k")
+  if (
+    /\b(?:delivered|dispatched|supplied|sent|sewed|tailored|made|gave)\s+([0-9]+|one|two|three|four|five|six|seven|eight|nine|ten|[a-zA-Z]+)/i.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+  // Sale verbs
+  if (/\b(?:i sold|we sold|sold\s+[0-9]+|sold\s+some|sold\s+a\s+|selling)\b/i.test(lower)) {
+    return true;
+  }
+  // Spending / purchase / expense verbs
+  if (
+    /\b(?:bought|i bought|we bought|spent|i spent|paid for|shop rent|stall rent|fuel|transport|salary|generator)\b/i.test(
+      lower
+    )
+  ) {
+    return true;
+  }
+  // Multiple distinct entities: e.g. quantity + product + recipient/customer + price ("2 outfits to Alhaji for 40k")
+  if (/[0-9]+\s+[a-zA-Z]+\s+(?:to|for)\s+[a-zA-Z]+/i.test(lower)) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Main Interpreter: Orchestrates parsing natural language against current business memory and ledger.
  */
 export async function processNaturalInput(
@@ -1046,89 +1091,105 @@ export async function processNaturalInput(
   // 1. Check if this is answering a pending follow-up question
   if (state.pendingFollowUp) {
     const followUp = state.pendingFollowUp;
-    const answeredCost = parseNairaAmount(input);
 
-    // Resolving ambiguous choice (e.g. "Ankara" or "Corporate Dress")
-    if (followUp.missingField === 'AMBIGUOUS_CHOICE' && followUp.options) {
-      const picked = followUp.options.find((opt) =>
-        lower.includes(opt.toLowerCase()) || opt.toLowerCase().includes(lower)
-      );
-      if (picked) {
-        const pending = followUp.pendingEvent || {};
-        const combined = `I sold ${pending.quantity || 1} ${picked}`;
-        return parseSaleStatement(combined, state);
-      }
-    }
-
-    // Resolving missing selling price (e.g. "I sold 3 kaftans" followed by "35,000")
-    if (followUp.missingField === 'SELLING_PRICE') {
-      // Check if user answered with a full compound phrase like "2 bags for 120k", "2 for 60k", or provided a new quantity/unit
-      const isCompoundAnswer = /[0-9]+\s*(?:bags?|bowls?|cartons?|items?|pieces?|shirts?|dresses?|units?|packs?)/i.test(input) ||
-        /\b(?:for|at)\s*[₦#]?[0-9]+/i.test(input);
-      if (isCompoundAnswer) {
-        const combined = `${followUp.pendingEvent?.rawUserText || followUp.productName || 'Sale'} ${input}`;
-        return parseSaleStatement(combined, state);
-      }
-
-      if (answeredCost !== null && answeredCost > 0) {
-        const pending = followUp.pendingEvent || {};
-        const prodName = followUp.productName || pending.productName || 'Items';
-        const qty = pending.quantity || 1;
-        const totalRev = answeredCost * qty;
-        const custName = followUp.customerName || pending.customerName;
-
-      // Check if product has cost in memory
-      const matchedProd = state.products.find((p) => p.name.toLowerCase() === prodName.toLowerCase());
-      const costRes = resolveProductCostForUnit(matchedProd, undefined, state);
-      const unitCost = costRes.unitCost || 0;
-      const totalCost = unitCost * qty;
-      const hasCost = unitCost > 0;
-      const grossProfit = hasCost ? totalRev - totalCost : 0;
-
-      const completedEvent: BusinessEvent = ensureEventHeadlineAndSummary({
-        id: `ev-${Date.now()}`,
-        timestamp: new Date().toISOString(),
-        date: todayStr,
-        timeStr,
-        type: 'SALE',
-        rawUserText: pending.rawUserText ? `${pending.rawUserText} -> ${input}` : input,
-        systemResponseText: `Got it. Recorded sale of ${qty} ${prodName.toLowerCase()} for ${formatNaira(totalRev)} (${formatNaira(answeredCost)} each). I've saved ${formatNaira(answeredCost)} as your normal selling price in Business Memory.`,
-        productName: prodName,
-        customerName: custName,
-        quantity: qty,
-        unitSellingPrice: answeredCost,
-        totalRevenue: totalRev,
-        cashReceived: totalRev,
-        receivableAdded: 0,
-        unitCostAtTime: unitCost,
-        totalCostAtTime: totalCost,
-        grossProfit: hasCost ? grossProfit : 0,
-        costIsEstimate: costRes.isEstimate,
-      });
-
-      const memoryUpdates: MemoryUpdateItem[] = [
-        {
-          type: 'PRODUCT_PRICE',
-          summary: `Normal selling price of ${prodName} recorded as ${formatNaira(answeredCost)}`,
-          data: {
-            productName: prodName,
-            price: answeredCost,
-            normalSellingPrice: answeredCost,
-            date: todayStr,
-            note: 'Learned normal selling price from owner answer during sale',
-          },
-        },
-      ];
-
+    // A. User explicitly cancels the pending follow-up
+    if (/^(?:cancel|nevermind|never mind|forget it|stop|ignore|clear|no|leave it|skip)\b/i.test(lower)) {
       return {
         isQuestion: false,
-        createdEvent: completedEvent,
-        memoryUpdates,
-        memoryUpdate: memoryUpdates[0] as any,
-        plainResponseText: completedEvent.systemResponseText,
+        conversationState: null,
+        plainResponseText: 'Cancelled previous prompt. What transaction or sale would you like to record?',
       };
     }
-  }
+
+    // B. User typed a brand-new transaction, inquiry, or statement -> DISCARD follow-up and process as fresh input!
+    if (isNewTransactionOrIntent(input)) {
+      // Intentionally bypass follow-up resolution; proceed directly to standard evaluation
+    } else {
+      const answeredCost = parseNairaAmount(input);
+
+      // Resolving ambiguous choice (e.g. "Ankara" or "Corporate Dress")
+      if (followUp.missingField === 'AMBIGUOUS_CHOICE' && followUp.options) {
+        const picked = followUp.options.find((opt) =>
+          lower.includes(opt.toLowerCase()) || opt.toLowerCase().includes(lower)
+        );
+        if (picked) {
+          const pending = followUp.pendingEvent || {};
+          const combined = `I sold ${pending.quantity || 1} ${picked}`;
+          return parseSaleStatement(combined, state);
+        }
+      }
+
+      // Resolving missing selling price (e.g. "I sold 3 kaftans" followed by "35,000")
+      if (followUp.missingField === 'SELLING_PRICE') {
+        // Only re-specify if user provided a pure quantity + price like "2 bags for 120k" or "2 for 60k"
+        const isReSpecifiedQuantityAndPrice =
+          /^[0-9]+\s*(?:bags?|bowls?|cartons?|items?|pieces?|shirts?|dresses?|units?|packs?)\s+(?:for|at)\s+[₦#]?[0-9]+/i.test(input) ||
+          /^[0-9]+\s+(?:for|at)\s+[₦#]?[0-9]+/i.test(input);
+
+        if (isReSpecifiedQuantityAndPrice) {
+          const combined = `${followUp.pendingEvent?.rawUserText || followUp.productName || 'Sale'} ${input}`;
+          return parseSaleStatement(combined, state);
+        }
+
+        if (answeredCost !== null && answeredCost > 0) {
+          const pending = followUp.pendingEvent || {};
+          const prodName = followUp.productName || pending.productName || 'Items';
+          const qty = pending.quantity || 1;
+          const totalRev = answeredCost * qty;
+          const custName = followUp.customerName || pending.customerName;
+
+          // Check if product has cost in memory
+          const matchedProd = state.products.find((p) => p.name.toLowerCase() === prodName.toLowerCase());
+          const costRes = resolveProductCostForUnit(matchedProd, undefined, state);
+          const unitCost = costRes.unitCost || 0;
+          const totalCost = unitCost * qty;
+          const hasCost = unitCost > 0;
+          const grossProfit = hasCost ? totalRev - totalCost : 0;
+
+          const completedEvent: BusinessEvent = ensureEventHeadlineAndSummary({
+            id: `ev-${Date.now()}`,
+            timestamp: new Date().toISOString(),
+            date: todayStr,
+            timeStr,
+            type: 'SALE',
+            rawUserText: pending.rawUserText ? `${pending.rawUserText} -> ${input}` : input,
+            systemResponseText: `Got it. Recorded sale of ${qty} ${prodName.toLowerCase()} for ${formatNaira(totalRev)} (${formatNaira(answeredCost)} each). I've saved ${formatNaira(answeredCost)} as your normal selling price in Business Memory.`,
+            productName: prodName,
+            customerName: custName,
+            quantity: qty,
+            unitSellingPrice: answeredCost,
+            totalRevenue: totalRev,
+            cashReceived: totalRev,
+            receivableAdded: 0,
+            unitCostAtTime: unitCost,
+            totalCostAtTime: totalCost,
+            grossProfit: hasCost ? grossProfit : 0,
+            costIsEstimate: costRes.isEstimate,
+          });
+
+          const memoryUpdates: MemoryUpdateItem[] = [
+            {
+              type: 'PRODUCT_PRICE',
+              summary: `Normal selling price of ${prodName} recorded as ${formatNaira(answeredCost)}`,
+              data: {
+                productName: prodName,
+                price: answeredCost,
+                normalSellingPrice: answeredCost,
+                date: todayStr,
+                note: 'Learned normal selling price from owner answer during sale',
+              },
+            },
+          ];
+
+          return {
+            isQuestion: false,
+            createdEvent: completedEvent,
+            memoryUpdates,
+            memoryUpdate: memoryUpdates[0] as any,
+            plainResponseText: completedEvent.systemResponseText,
+          };
+        }
+      }
 
     if (followUp.missingField === 'COST_PER_UNIT' && answeredCost !== null && answeredCost > 0) {
       const pending = followUp.pendingEvent;
@@ -1245,12 +1306,13 @@ export async function processNaturalInput(
       return resolvedSale;
     }
   }
+}
 
   // 2. Primary: High-Precision Natural Language Understanding via Gemini API
   if (typeof window !== 'undefined' || process.env.TEST_API_URL) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8-second client timeout ensures responses comfortably under 15s
+      const timeoutId = setTimeout(() => controller.abort(), 12000); // 12-second client timeout ensures responses comfortably under 15s
 
       const response = await fetch('/api/gemini/interpret', {
       method: 'POST',
@@ -1519,12 +1581,13 @@ export async function processNaturalInput(
         const costRes = resolveProductCostForUnit(prod, unit, state);
         const unitCost = costRes.unitCost > 0 ? costRes.unitCost : (prod.currentCost || 0);
 
-        // If product cost is unknown for a named product (e.g. "I sold 3 shirts for 6000"), ask intelligent follow-up
+        // If product cost is unknown for an anonymous retail sale (e.g. "I sold 3 shirts for 6000"), ask intelligent follow-up
         const prodDisplayName = (prod && prod.name && prod.name.toLowerCase() !== 'items') ? prod.name : pName;
         const singularName = prodDisplayName.replace(/s$/i, '');
         const isGenericItem = prodDisplayName.toLowerCase() === 'item' || prodDisplayName.toLowerCase() === 'items';
+        const isCustomerOrDeliverySale = Boolean(custName) || /\b(?:delivered|supplied|sent|dispatched|sewed|tailored|gave)\b/i.test(input);
 
-        if (unitCost === 0 && !isGenericItem) {
+        if (unitCost === 0 && !isGenericItem && !isCustomerOrDeliverySale) {
           const pendingEvent: Partial<BusinessEvent> = {
             rawUserText: input,
             productName: prodDisplayName,
@@ -2138,6 +2201,16 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
   const isSaleStatement =
     !isMerchantBuying &&
     (lower.includes('sold') ||
+      lower.includes('delivered') ||
+      lower.includes('supplied') ||
+      lower.includes('dispatched') ||
+      lower.includes('sent') ||
+      lower.includes('sewed') ||
+      lower.includes('tailored') ||
+      lower.includes('made') ||
+      lower.includes('gave') ||
+      /\b(?:delivered|supplied|dispatched|sent|sewed|tailored|made|gave)\b/i.test(lower) ||
+      /\bto\s+[a-zA-Z]+\s+for\s+[₦#]?[0-9]+/i.test(lower) ||
       isCustomerBuyingStatement(input, state.customers) ||
       lower.includes('paid for') ||
       (lower.includes('took') && !lower.includes('took money') && !lower.includes('took from')) ||
@@ -2147,7 +2220,7 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
       lower.includes('@') ||
       matchKnownProduct(lower, state.products) !== null ||
       matchKnownCustomer(lower, state.customers) !== null ||
-      /^[0-9]+\s*(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?)/i.test(input));
+      /^[0-9]+\s*(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?|outfits?|gowns?|clothes?|dresses?|suits?)/i.test(input));
 
   if (isSaleStatement) {
     const saleResult = parseSaleStatement(input, state);
@@ -2555,15 +2628,26 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
   const prodDisplayName = product ? product.name : (extractProductName(input) || 'Items');
   const singularName = prodDisplayName.replace(/s$/, '');
 
+  const isDeliveryOrCustomerSale = Boolean(customerName) || /\b(?:delivered|supplied|sent|dispatched|sewed|tailored|made|gave)\b/i.test(input);
+
   if (
     prodDisplayName.toLowerCase() === 'item' ||
     prodDisplayName.toLowerCase() === 'items' ||
-    (isRateMultiplied && !product)
+    (isRateMultiplied && !product) ||
+    isDeliveryOrCustomerSale
   ) {
     const rateText = isRateMultiplied
       ? ` (${quantity} × ${formatNaira(unitPrice)} = ${formatNaira(totalRevenue)} total revenue)`
       : '';
-    const plainResponse = `Got it. Recorded sale of ${quantity} ${prodDisplayName.toLowerCase()} at ${formatNaira(unitPrice)} each${rateText}. Added to your daily ledger and calendar.`;
+    const actionVerb = /\bdelivered\b/i.test(input)
+      ? 'delivery of'
+      : /\bsupplied\b/i.test(input)
+      ? 'supply of'
+      : /\b(?:sewed|tailored|made)\b/i.test(input)
+      ? 'custom order for'
+      : 'sale of';
+    const recipientText = customerName ? ` to ${customerName}` : '';
+    const plainResponse = `Got it. Recorded ${actionVerb} ${quantity} ${prodDisplayName.toLowerCase()}${recipientText} for ${formatNaira(totalRevenue)} (${formatNaira(unitPrice)} each)${rateText}. Added to your daily ledger and calendar.`;
     const event: BusinessEvent = {
       id: `ev-${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -2577,28 +2661,62 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
       productCategory: inferProductCategory(prodDisplayName),
       customerName,
       quantity,
+      unit: unitMentioned || undefined,
       unitSellingPrice: unitPrice,
       totalRevenue,
       cashReceived,
       receivableAdded,
       unitCostAtTime: 0,
       totalCostAtTime: 0,
-      grossProfit: 0,
+      grossProfit: totalRevenue,
     };
+
+    const finalEvent = ensureEventHeadlineAndSummary(event);
+
+    const memoryUpdates: MemoryUpdateItem[] = [
+      {
+        type: 'CALENDAR_UPDATE',
+        summary: `Calendar updated for ${formatDateShort(targetDate)}: Sold ${quantity} ${prodDisplayName} for ${formatNaira(totalRevenue)}`,
+        data: { date: targetDate },
+      },
+    ];
+
+    if (receivableAdded > 0 && customerName) {
+      memoryUpdates.push({
+        type: 'CUSTOMER_DEBT',
+        summary: `${customerName} debt balance increased by ${formatNaira(receivableAdded)}`,
+        data: {
+          customerName,
+          balanceAdded: receivableAdded,
+          date: targetDate,
+          note: `Debt from delivery/purchase of ${quantity} ${unitMentioned || ''} ${prodDisplayName}`,
+        },
+      });
+    }
+
+    if (unitPrice > 0) {
+      memoryUpdates.push({
+        type: 'PRODUCT_PRICE',
+        summary: `Normal selling price of ${prodDisplayName} recorded as ${formatNaira(unitPrice)}`,
+        data: {
+          productName: prodDisplayName,
+          price: unitPrice,
+          normalSellingPrice: unitPrice,
+          date: targetDate,
+          note: 'Recorded from customer transaction',
+        },
+      });
+    }
+
     return {
       isQuestion: false,
-      createdEvent: event,
+      createdEvent: finalEvent,
       targetDate,
       targetCalendarDate: targetDate,
       shouldNavigateToCalendar,
       plainResponseText: plainResponse,
-      memoryUpdates: [
-        {
-          type: 'CALENDAR_UPDATE',
-          summary: `Calendar updated for ${formatDateShort(targetDate)}: Sold ${quantity} ${prodDisplayName} for ${formatNaira(totalRevenue)}`,
-          data: { date: targetDate },
-        },
-      ],
+      memoryUpdates,
+      memoryUpdate: memoryUpdates.find((u) => u.type === 'CUSTOMER_DEBT') as any,
     };
   }
 
@@ -3114,8 +3232,10 @@ function extractCustomerName(text: string): string | undefined {
 }
 
 function extractProductName(text: string): string | undefined {
-  // 1. Check patterns like "sold some rice", "sold rice", "bought some oil"
-  const verbMatch = text.match(/(?:sold|selling|sell|bought|buy)\s+(?:some\s+|a\s+|an\s+|the\s+)?([a-zA-Z]+)/i);
+  // 1. Check patterns like "sold some rice", "delivered outfits", "bought some oil"
+  const verbMatch = text.match(
+    /(?:sold|selling|sell|delivered|supplied|sent|dispatched|tailored|sewed|made|gave|bought|buy)\s+(?:some\s+|a\s+|an\s+|the\s+)?([a-zA-Z]+)/i
+  );
   if (verbMatch) {
     const candidate = verbMatch[1];
     const stopWords = ['to', 'for', 'from', 'at', 'yesterday', 'today', 'on', 'my', 'his', 'her', 'their', 'some'];
@@ -3124,13 +3244,29 @@ function extractProductName(text: string): string | undefined {
       return candidate;
     }
     // If it was a unit (e.g. "sold bags of rice"), capture following word
-    const ofUnitMatch = text.match(/(?:sold|bought)\s+(?:some\s+)?[a-zA-Z]+\s+(?:of\s+)?([a-zA-Z]+)/i);
+    const ofUnitMatch = text.match(/(?:sold|delivered|supplied|bought)\s+(?:some\s+)?[a-zA-Z]+\s+(?:of\s+)?([a-zA-Z]+)/i);
     if (ofUnitMatch && !stopWords.includes(ofUnitMatch[1].toLowerCase())) {
       return ofUnitMatch[1];
     }
   }
 
-  // 2. Check numbered pattern like "3 shirts", "30 cartons of drinks"
+  // 2. Check numbered multi-word patterns first like "2 native outfits", "3 power banks"
+  const multiWordMatch = text.match(/[0-9]+\s+([a-zA-Z]+\s+[a-zA-Z]+)(?:\s+(?:to|for|at|from|with|\b)|$)/i);
+  if (multiWordMatch) {
+    const candidate = multiWordMatch[1].trim();
+    const parts = candidate.split(/\s+/);
+    const stopWords = ['to', 'for', 'from', 'at', 'each', 'yesterday', 'today', 'cash', 'naira'];
+    const units = ['bowls', 'pieces', 'pairs', 'cartons', 'bottles', 'bags', 'carton', 'bag', 'bottle', 'piece', 'bowl'];
+    if (
+      parts.length === 2 &&
+      !stopWords.includes(parts[1].toLowerCase()) &&
+      !units.includes(parts[0].toLowerCase())
+    ) {
+      return candidate;
+    }
+  }
+
+  // 3. Check numbered single-word pattern like "2 outfits", "3 shirts", "30 cartons of drinks"
   const match = text.match(/[0-9]+\s+([a-zA-Z]+)/);
   if (match) {
     const word = match[1];
