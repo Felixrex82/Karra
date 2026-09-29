@@ -37,6 +37,100 @@ export function parseWordNumber(word: string): number | null {
   return map[word.toLowerCase()] || null;
 }
 
+/**
+ * Extracts sale quantity and unit with high precision across all merchant phrasing:
+ * - "Delivered 2 native outfits to Alhaji for 40k" -> quantity: 2, unit: "native outfits"
+ * - "Sold 5 dresses", "Supplied 4 cartons", "Tailored 3 kaftans"
+ * - "Delivered two outfits", "Sold three shirts"
+ * - "2 native outfits for 40k"
+ */
+export function extractSaleQuantity(
+  input: string,
+  knownProducts?: ProductMemory[]
+): { quantity: number; unit?: string } {
+  // 1. Verb + number pattern: e.g. "delivered 2", "sold 2", "supplied 5", "made 3", "sewed 2", "tailored 4", "sent 6", "gave 2"
+  const verbNumMatch = input.match(
+    /\b(?:delivered|sold|supplied|made|sewed|tailored|sent|dispatched|gave|provided|issued|change\s+to|into)\s+([0-9]+)\b/i
+  );
+  if (verbNumMatch) {
+    const qty = parseInt(verbNumMatch[1], 10);
+    if (qty > 0) {
+      const afterMatch = input.substring(verbNumMatch.index! + verbNumMatch[0].length).trim();
+      const unitMatch = afterMatch.match(/^([a-zA-Z]+)(?:\s+([a-zA-Z]+))?/);
+      let unit = '';
+      if (unitMatch && !['to', 'for', 'from', 'at', 'with', 'yesterday', 'today', 'on'].includes(unitMatch[1].toLowerCase())) {
+        unit = unitMatch[2] && !['to', 'for', 'from', 'at', 'with'].includes(unitMatch[2].toLowerCase())
+          ? `${unitMatch[1]} ${unitMatch[2]}`
+          : unitMatch[1];
+      }
+      return { quantity: qty, unit: unit || undefined };
+    }
+  }
+
+  // 2. Verb + word number pattern: e.g. "delivered two", "sold three", "supplied four"
+  const wordVerbMatch = input.match(
+    /\b(?:delivered|sold|supplied|made|sewed|tailored|sent|dispatched|gave|bought)\s+(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\b/i
+  );
+  if (wordVerbMatch) {
+    const val = parseWordNumber(wordVerbMatch[1]);
+    if (val && val > 0) {
+      return { quantity: val };
+    }
+  }
+
+  // 3. Known product match: e.g. "2 native outfits", "5 dresses" where product exists in Business Memory
+  if (knownProducts && knownProducts.length > 0) {
+    for (const p of knownProducts) {
+      if (!p.name) continue;
+      const pEsc = p.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pMatch = input.match(new RegExp(`\\b([0-9]+)\\s+(?:[a-zA-Z]+\\s+)?${pEsc}\\b`, 'i'));
+      if (pMatch) {
+        const qty = parseInt(pMatch[1], 10);
+        if (qty > 0) return { quantity: qty, unit: p.unit || undefined };
+      }
+    }
+  }
+
+  // 4. Standalone number followed by item/merchandise nouns:
+  // e.g. "2 native outfits", "2 outfits", "3 dresses", "2 bags of rice", "5 shirts"
+  const nounQtyMatch = input.match(
+    /\b([0-9]+)\s*(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?|outfits?|wears?|dresses?|gowns?|kaftans?|suits?|wigs?|fabrics?|clothes?|cloths?|caps?|hats?|trouser|trousers|jeans|skirt|skirts|cups?|tins?|plates?)\b/i
+  );
+  if (nounQtyMatch) {
+    const qty = parseInt(nounQtyMatch[1], 10);
+    if (qty > 0) return { quantity: qty };
+  }
+
+  // 5. General number preceding a word (excluding currency, time, prepositions, and price markers)
+  const allNumWordMatches = [...input.matchAll(/\b([0-9]+)\s+([a-zA-Z]+)(?:\s+([a-zA-Z]+))?\b/g)];
+  for (const m of allNumWordMatches) {
+    const num = parseInt(m[1], 10);
+    const w1 = m[2].toLowerCase();
+    // Skip currency suffixes, time of day, percentages, prepositions
+    if (['k', 'm', 'naira', 'pm', 'am', 'percent', 'pct', 'for', 'at', 'to', 'from', 'each', 'per', 'on', 'in'].includes(w1)) {
+      continue;
+    }
+    // Skip if preceded by "for", "at", "@", "₦", "#"
+    const prefixIndex = m.index || 0;
+    const prefix = input.substring(Math.max(0, prefixIndex - 10), prefixIndex).trim();
+    if (/(?:for|at|@|[₦#])$/i.test(prefix)) {
+      continue;
+    }
+    return { quantity: num, unit: w1 };
+  }
+
+  // 6. Word number preceding noun: e.g. "two outfits", "three native wears"
+  const wordNounMatch = input.match(
+    /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty)\s+(?:[a-zA-Z]+\s+)?(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?|outfits?|wears?|dresses?|gowns?|kaftans?|suits?|wigs?|fabrics?|clothes?|cloths?|caps?)\b/i
+  );
+  if (wordNounMatch) {
+    const val = parseWordNumber(wordNounMatch[1]);
+    if (val && val > 0) return { quantity: val };
+  }
+
+  return { quantity: 1 };
+}
+
 export function levenshteinDistance(a: string, b: string): number {
   const m = a.length;
   const n = b.length;
@@ -462,21 +556,10 @@ export function handleCorrectionInput(input: string, state: BusinessState): Pars
     lower.includes('input in my calendar');
 
   if (hasSaleTerms) {
-    // Extract quantity
-    let quantity = 1;
-    const qtyMatch = input.match(/([0-9]+)\s*(?:bags?|bowls?|cartons?|shirts?|shoes?|units?|pieces?|items?)/i) ||
-      input.match(/(?:sold|bought|change|to|into)\s+([0-9]+)/i);
-    if (qtyMatch) {
-      quantity = parseInt(qtyMatch[1], 10);
-    }
-
-    // Extract unit
-    let unitMentioned = '';
-    const unitMatch = input.match(/[0-9]+\s+([a-zA-Z]+)\s+(?:of\s+)?([a-zA-Z]+)/i) ||
-      input.match(/([0-9]+)\s+([a-zA-Z]+)/i);
-    if (unitMatch && !['naira', 'k', 'm'].includes(unitMatch[1].toLowerCase())) {
-      unitMentioned = unitMatch[1].toLowerCase();
-    }
+    // Extract quantity & unit
+    const parsedQty = extractSaleQuantity(input, state.products);
+    const quantity = parsedQty.quantity;
+    const unitMentioned = parsedQty.unit || '';
 
     // Extract product
     const product = matchKnownProduct(lower, state.products);
@@ -2185,19 +2268,9 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
     lower.includes('calendar') || lower.includes('in my calendar') || lower.includes('change the input');
 
   // 2. Extract Quantity & Unit
-  let quantity = 1;
-  const qtyMatch = input.match(/([0-9]+)\s*(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?)/i) ||
-    input.match(/(?:sold|bought)\s+([0-9]+)/i);
-  if (qtyMatch) {
-    quantity = parseInt(qtyMatch[1], 10);
-  }
-
-  let unitMentioned = '';
-  const unitMatch = input.match(/[0-9]+\s+([a-zA-Z]+)\s+(?:of\s+)?([a-zA-Z]+)/i) ||
-    input.match(/([0-9]+)\s+([a-zA-Z]+)/i);
-  if (unitMatch && !['naira', 'k', 'm'].includes(unitMatch[1].toLowerCase())) {
-    unitMentioned = unitMatch[1].toLowerCase();
-  }
+  const parsedQty = extractSaleQuantity(input, state.products);
+  let quantity = parsedQty.quantity;
+  let unitMentioned = parsedQty.unit || '';
 
   // 3. Extract Total Revenue / Sale Value
   let totalRevenue = 0;

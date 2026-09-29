@@ -114,7 +114,8 @@ CORE UNDERSTANDING DIRECTIVES:
 
 6. SUBJECT DIRECTION (Merchant vs Customer):
    - "I bought...", "Bought...", "We bought..." (Merchant spending money): ALWAYS an OUTFLOW ("RECORD_EXPENSE" or "RECORD_PURCHASE"), NEVER "RECORD_SALE"!
-   - "David bought...", "Customer bought...", "I sold...", "Ada took..." (Customer purchasing goods/services): ALWAYS "RECORD_SALE"!
+   - "David bought...", "Customer bought...", "I sold...", "Ada took...", "Delivered 2 native outfits to Alhaji for 40k", "Supplied 5 cartons...", "Tailored 3 dresses..." (Customer purchasing goods/services or merchant order fulfillment): ALWAYS "RECORD_SALE"!
+   - CRITICAL: Extract the EXACT numeric quantity specified (e.g. "delivered 2 native outfits" -> quantity = 2; "supplied 5 cartons" -> quantity = 5). NEVER default to 1 when a number is present!
 
 POSSIBLE INTENTS:
 - "RECORD_SALE": Sale of goods or services.

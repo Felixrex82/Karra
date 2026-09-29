@@ -193,6 +193,44 @@ async function runTests() {
   }
   console.log('✅ TEST 10 PASSED: Active Business Memory resolved 3 clothes at ₦50,000 each = ₦150,000 revenue without asking.');
 
+  // Test 11: "Delivered 2 native outfits to Alhaji for 40k"
+  console.log('\n▶ TEST 11: "Delivered 2 native outfits to Alhaji for 40k" extracts quantity 2, cost for 2 units, and Alhaji as customer');
+  state.pendingFollowUp = null;
+  state.products.push({
+    id: 'prod-native-outfits',
+    name: 'Native Outfits',
+    category: 'Fashion',
+    currentCost: 17300,
+    normalSellingPrice: 20000,
+    unit: 'outfit',
+    costHistory: [],
+    priceHistory: [],
+  });
+
+  const res11 = await processNaturalInput('Delivered 2 native outfits to Alhaji for 40k', state);
+  if (!res11.createdEvent) {
+    throw new Error(`TEST 11 FAILED: Expected createdEvent, got: ${JSON.stringify(res11)}`);
+  }
+  if (res11.createdEvent.quantity !== 2) {
+    throw new Error(`TEST 11 FAILED: Expected quantity 2, but got ${res11.createdEvent.quantity}`);
+  }
+  if (res11.createdEvent.customerName !== 'Alhaji') {
+    throw new Error(`TEST 11 FAILED: Expected customerName 'Alhaji', got '${res11.createdEvent.customerName}'`);
+  }
+  if (res11.createdEvent.totalRevenue !== 40000) {
+    throw new Error(`TEST 11 FAILED: Expected totalRevenue 40000, got ${res11.createdEvent.totalRevenue}`);
+  }
+  if (res11.createdEvent.unitSellingPrice !== 20000) {
+    throw new Error(`TEST 11 FAILED: Expected unitSellingPrice 20000 (40k / 2), got ${res11.createdEvent.unitSellingPrice}`);
+  }
+  if (res11.createdEvent.totalCostAtTime !== 34600) {
+    throw new Error(`TEST 11 FAILED: Expected totalCostAtTime 34600 (2 x 17300), got ${res11.createdEvent.totalCostAtTime}`);
+  }
+  if (res11.createdEvent.grossProfit !== 5400) {
+    throw new Error(`TEST 11 FAILED: Expected grossProfit 5400 (40000 - 34600), got ${res11.createdEvent.grossProfit}`);
+  }
+  console.log('✅ TEST 11 PASSED: Exactly 2 native outfits logged to Alhaji for ₦40,000 (Cost: ₦34,600, Gross Profit: ₦5,400).');
+
   console.log('\n🎉 ALL NLP & EXPENSE TESTS PASSED SUCCESSFULLY!');
 }
 
