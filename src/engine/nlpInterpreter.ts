@@ -1208,6 +1208,38 @@ export async function processNaturalInput(
       const intent = data.data.intent;
       const interpretation = data.data.interpretationSummary;
 
+      // Normalize entities from Gemini conversation layer
+      const entities = data.data.entities || {};
+      const aiProductName = entities.productReference || data.data.productName;
+      const aiQuantity = entities.quantity !== undefined && entities.quantity !== null ? entities.quantity : (data.data.quantity || 1);
+      const aiUnitPrice = entities.explicitUnitPrice !== undefined && entities.explicitUnitPrice !== null ? entities.explicitUnitPrice : data.data.unitPrice;
+      const aiTotalAmount = entities.explicitTotalAmount !== undefined && entities.explicitTotalAmount !== null ? entities.explicitTotalAmount : data.data.totalAmount;
+      const aiCustomerName = entities.customerReference || data.data.customerName;
+      const aiCashPaid = entities.cashPaid !== undefined && entities.cashPaid !== null ? entities.cashPaid : data.data.cashPaid;
+      const aiSupplierName = entities.supplierReference || data.data.supplierName;
+      const aiExpenseAmount = entities.expenseAmount !== undefined && entities.expenseAmount !== null ? entities.expenseAmount : (aiTotalAmount || data.data.expenseAmount);
+      const aiExpenseCategory = entities.expenseCategory || data.data.expenseCategory;
+
+      // Handle detected ambiguity from conversation understanding layer
+      if (data.data.isAmbiguous && data.data.ambiguityQuestion) {
+        return {
+          isQuestion: false,
+          followUpRequired: {
+            id: `fu-${Date.now()}`,
+            prompt: data.data.ambiguityQuestion,
+            missingField: 'AMBIGUOUS_CHOICE',
+            options: data.data.ambiguityOptions || [],
+            pendingEvent: {
+              rawUserText: input,
+              quantity: aiQuantity || 1,
+              type: 'SALE',
+            },
+            helperText: 'Select or reply with the exact product name.',
+          },
+          plainResponseText: data.data.ambiguityQuestion,
+        };
+      }
+
       // Handle explicit clarification requests from AI (e.g. missing amount or quantity)
       if (data.data.requiresClarification && data.data.clarificationPrompt) {
         return {
@@ -1216,12 +1248,12 @@ export async function processNaturalInput(
             id: `fu-${Date.now()}`,
             prompt: data.data.clarificationPrompt,
             missingField: 'REQUIRED_TRANSACTION_INFO',
-            productName: data.data.productName || undefined,
-            customerName: data.data.customerName || undefined,
+            productName: aiProductName || undefined,
+            customerName: aiCustomerName || undefined,
             pendingEvent: {
               rawUserText: input,
-              productName: data.data.productName || undefined,
-              customerName: data.data.customerName || undefined,
+              productName: aiProductName || undefined,
+              customerName: aiCustomerName || undefined,
             },
             helperText: 'Please provide the missing details to record this transaction accurately.',
           },
@@ -1229,42 +1261,63 @@ export async function processNaturalInput(
         };
       }
 
-      // Safeguard: If AI classified as RECORD_SALE but no amounts or items provided (e.g. "I sold some rice")
+      // Safeguard: If AI classified as RECORD_SALE but no explicit price was stated (e.g. "I sold 3 clothes", "I sold 2 dresses", "I sold some rice")
       if (
         intent === 'RECORD_SALE' &&
-        (!data.data.totalAmount || data.data.totalAmount <= 0) &&
-        (!data.data.unitPrice || data.data.unitPrice <= 0) &&
-        (!data.data.items || data.data.items.length === 0)
+        (!aiTotalAmount || aiTotalAmount <= 0) &&
+        (!aiUnitPrice || aiUnitPrice <= 0) &&
+        (!data.data.items || data.data.items.length <= 1)
       ) {
-        const pName = data.data.productName || extractProductName(input) || 'items';
-        const promptMsg = `How many ${pName.toLowerCase()} did you sell, and for how much?`;
-        return {
-          isQuestion: false,
-          followUpRequired: {
-            id: `fu-${Date.now()}`,
-            prompt: promptMsg,
-            missingField: 'QUANTITY_AND_PRICE',
-            productName: pName,
-            customerName: data.data.customerName || undefined,
-            pendingEvent: {
-              rawUserText: input,
-              productName: pName,
-              customerName: data.data.customerName || undefined,
-              type: 'SALE',
+        const pName = aiProductName || extractProductName(input) || 'items';
+        const matchedProd = matchKnownProduct(pName, state.products);
+        if (matchedProd && matchedProd.normalSellingPrice && matchedProd.normalSellingPrice > 0) {
+          // ACTIVE BUSINESS MEMORY AUTOMATICALLY RESOLVES PRICE!
+          const qty = aiQuantity || 1;
+          const uPrice = matchedProd.normalSellingPrice;
+          const totRev = uPrice * qty;
+          data.data.totalAmount = totRev;
+          data.data.unitPrice = uPrice;
+          data.data.productName = matchedProd.name;
+          data.data.quantity = qty;
+        } else {
+          // Price is genuinely unknown in both message and memory -> ask intelligent follow-up
+          let singularProd = (matchedProd ? matchedProd.name : pName).replace(/s$/i, '');
+          if (pName.toLowerCase() === 'clothes') singularProd = 'cloth';
+          const isKnownNoun = pName.toLowerCase() !== 'items' && pName.toLowerCase() !== 'item';
+          const promptMsg = isKnownNoun
+            ? `How much do you normally sell one ${singularProd.toLowerCase()} for?`
+            : `How many ${pName.toLowerCase()} did you sell, and for how much?`;
+          return {
+            isQuestion: false,
+            followUpRequired: {
+              id: `fu-${Date.now()}`,
+              prompt: promptMsg,
+              missingField: isKnownNoun ? 'SELLING_PRICE' : 'QUANTITY_AND_PRICE',
+              productName: matchedProd ? matchedProd.name : pName,
+              customerName: aiCustomerName || undefined,
+              pendingEvent: {
+                rawUserText: input,
+                productName: matchedProd ? matchedProd.name : pName,
+                customerName: aiCustomerName || undefined,
+                quantity: aiQuantity || 1,
+                type: 'SALE',
+              },
+              helperText: isKnownNoun
+                ? `Tell me the normal selling price. I'll calculate your total and remember it for future sales.`
+                : 'Specify quantity and total amount or unit price to record this sale.',
             },
-            helperText: 'Specify quantity and total amount or unit price to record this sale.',
-          },
-          plainResponseText: promptMsg,
-        };
+            plainResponseText: promptMsg,
+          };
+        }
       }
 
       // Safeguard: If AI classified as RECORD_CUSTOMER_PAYMENT but no amount was provided (e.g. "John paid me")
       if (
         intent === 'RECORD_CUSTOMER_PAYMENT' &&
-        (!data.data.cashPaid || data.data.cashPaid <= 0) &&
-        (!data.data.totalAmount || data.data.totalAmount <= 0)
+        (!aiCashPaid || aiCashPaid <= 0) &&
+        (!aiTotalAmount || aiTotalAmount <= 0)
       ) {
-        const cName = data.data.customerName || extractCustomerName(input) || 'the customer';
+        const cName = aiCustomerName || extractCustomerName(input) || 'the customer';
         const promptMsg = `How much did ${cName} pay you?`;
         return {
           isQuestion: false,
@@ -2218,21 +2271,41 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
     }
 
     // Standard "for 6000" or "for 150k"
-    const forMatch = input.match(/for\s+(?:[₦#]?\s*([0-9.,]+[km]?))/i);
+    const forMatch = input.match(/\bfor\s+(?:[₦#]?\s*([0-9.,]+[km]?))/i);
     if (forMatch) {
       totalRevenue = parseNairaAmount(forMatch[1]) || 0;
       unitPrice = totalRevenue / quantity;
     } else {
-      // Look for standalone amount
-      const amtMatch = input.match(/(?:[₦#]?\s*([0-9.,]+[km]?))/i);
-      if (amtMatch) {
-        totalRevenue = parseNairaAmount(amtMatch[1]) || 0;
-        unitPrice = totalRevenue / quantity;
+      // Look for explicit currency or k/m amount (e.g. "₦6000", "#150k", "50k", "2m", "6000 naira")
+      const explicitAmtMatch = input.match(/(?:[₦#]\s*([0-9.,]+[km]?)|([0-9.,]+)\s*naira|\b([0-9.]+)\s*[km]\b)/i);
+      if (explicitAmtMatch) {
+        const amtStr = explicitAmtMatch[1] || explicitAmtMatch[2] || explicitAmtMatch[0];
+        const parsed = parseNairaAmount(amtStr);
+        if (parsed && parsed > 0) {
+          totalRevenue = parsed;
+          unitPrice = totalRevenue / quantity;
+        }
+      } else {
+        // Look for a distinct second number that is NOT the quantity (e.g. "I sold 3 shirts 15000")
+        const allNumMatches = [...input.matchAll(/\b([0-9.,]+)\b/g)];
+        if (allNumMatches.length >= 2) {
+          const nonQtyMatch = allNumMatches.find((m) => {
+            const val = parseNairaAmount(m[1]);
+            return val !== null && val !== quantity && val >= 50;
+          });
+          if (nonQtyMatch) {
+            const parsed = parseNairaAmount(nonQtyMatch[1]);
+            if (parsed && parsed > 0) {
+              totalRevenue = parsed;
+              unitPrice = totalRevenue / quantity;
+            }
+          }
+        }
       }
     }
   }
 
-  // Safeguard: If no revenue or price was specified in the sale statement (e.g. "I sold some rice", "I sold 2 dresses", "sold shirts")
+  // Safeguard: If no revenue or price was specified in the sale statement (e.g. "I sold some rice", "I sold 2 dresses", "I sold 3 clothes")
   if (totalRevenue <= 0 && unitPrice <= 0) {
     if (product && product.normalSellingPrice && product.normalSellingPrice > 0) {
       // ACTIVE MEMORY RESOLVES PRICE AUTOMATICALLY!
@@ -2241,7 +2314,10 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
     } else {
       const prodDisplayName = product ? product.name : (extractProductName(input) || 'items');
       const isKnownNoun = prodDisplayName.toLowerCase() !== 'items' && prodDisplayName.toLowerCase() !== 'item';
-      const singularName = prodDisplayName.replace(/s$/i, '');
+      let singularName = prodDisplayName.replace(/s$/i, '');
+      if (prodDisplayName.toLowerCase() === 'clothes') {
+        singularName = 'cloth';
+      }
 
       const hasExplicitQuantity = /[0-9]+/.test(input) || /\b(one|two|three|four|five|six|seven|eight|nine|ten)\b/i.test(input);
       const isUncountable = ['rice', 'beans', 'garri', 'fuel', 'oil', 'flour', 'sugar', 'cement'].includes(prodDisplayName.toLowerCase());

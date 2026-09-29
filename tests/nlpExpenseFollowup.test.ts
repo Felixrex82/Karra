@@ -130,6 +130,69 @@ async function runTests() {
     throw new Error(`TEST 7 FAILED: Expected either cost follow-up or completed sale, got: ${JSON.stringify(res7)}`);
   }
 
+  // Test 8: "I sold 3 clothes" with product cost ₦39,000 but unknown selling price
+  console.log('\n▶ TEST 8: "I sold 3 clothes" must ask for selling price and NEVER invent ₦3 revenue');
+  state.pendingFollowUp = null;
+  state.products.push({
+    id: 'prod-clothes',
+    name: 'Clothes',
+    category: 'Fashion',
+    currentCost: 39000,
+    normalSellingPrice: 0, // selling price is unknown
+    unit: 'cloth',
+    costHistory: [],
+    priceHistory: [],
+  });
+
+  const res8 = await processNaturalInput('I sold 3 clothes', state);
+  if (!res8.followUpRequired) {
+    throw new Error(`TEST 8 FAILED: Expected follow-up question for missing selling price, but sale was recorded: ${JSON.stringify(res8.createdEvent)}`);
+  }
+  if (res8.createdEvent && res8.createdEvent.totalRevenue === 3) {
+    throw new Error('TEST 8 FAILED: Severely hallucinated revenue of ₦3 from quantity 3!');
+  }
+  if (!res8.followUpRequired.prompt.toLowerCase().includes('how much') || !res8.followUpRequired.prompt.toLowerCase().includes('cloth')) {
+    throw new Error(`TEST 8 FAILED: Unexpected follow-up prompt: "${res8.followUpRequired.prompt}"`);
+  }
+  console.log(`✅ TEST 8 PASSED: Follow-up triggered cleanly -> "${res8.followUpRequired.prompt}"`);
+
+  // Test 9: Answering "I sold 3 clothes" follow-up with "45,000"
+  console.log('\n▶ TEST 9: Resolving "I sold 3 clothes" follow-up with "45,000"');
+  state.pendingFollowUp = res8.followUpRequired;
+  const res9 = await processNaturalInput('45000', state);
+  if (!res9.createdEvent) {
+    throw new Error(`TEST 9 FAILED: Expected createdEvent, got: ${JSON.stringify(res9)}`);
+  }
+  if (res9.createdEvent.totalRevenue !== 135000) {
+    throw new Error(`TEST 9 FAILED: Expected totalRevenue 135000 (3 x 45k), got ${res9.createdEvent.totalRevenue}`);
+  }
+  if (res9.createdEvent.totalCostAtTime !== 117000) {
+    throw new Error(`TEST 9 FAILED: Expected totalCostAtTime 117000 (3 x 39k), got ${res9.createdEvent.totalCostAtTime}`);
+  }
+  if (res9.createdEvent.grossProfit !== 18000) {
+    throw new Error(`TEST 9 FAILED: Expected grossProfit 18000, got ${res9.createdEvent.grossProfit}`);
+  }
+  console.log('✅ TEST 9 PASSED: Recorded sale with ₦135,000 revenue, ₦117,000 cost, and +₦18,000 gross profit.');
+
+  // Test 10: "I sold 3 clothes" when normal selling price IS in Business Memory
+  console.log('\n▶ TEST 10: Active Business Memory automatically calculates revenue when normal selling price is saved');
+  state.pendingFollowUp = null;
+  const clothesProd = state.products.find((p) => p.name.toLowerCase() === 'clothes');
+  if (clothesProd) {
+    clothesProd.normalSellingPrice = 50000;
+  }
+  const res10 = await processNaturalInput('I sold 3 clothes', state);
+  if (res10.followUpRequired) {
+    throw new Error(`TEST 10 FAILED: Follow-up was asked even though normal selling price ₦50,000 exists in Business Memory: "${res10.followUpRequired.prompt}"`);
+  }
+  if (!res10.createdEvent || res10.createdEvent.totalRevenue !== 150000) {
+    throw new Error(`TEST 10 FAILED: Expected totalRevenue 150000 (3 x 50k), got ${res10.createdEvent?.totalRevenue}`);
+  }
+  if (res10.createdEvent.grossProfit !== 33000) {
+    throw new Error(`TEST 10 FAILED: Expected gross profit 33000 (150k - 117k), got ${res10.createdEvent.grossProfit}`);
+  }
+  console.log('✅ TEST 10 PASSED: Active Business Memory resolved 3 clothes at ₦50,000 each = ₦150,000 revenue without asking.');
+
   console.log('\n🎉 ALL NLP & EXPENSE TESTS PASSED SUCCESSFULLY!');
 }
 
