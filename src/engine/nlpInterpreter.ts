@@ -147,24 +147,68 @@ export function levenshteinDistance(a: string, b: string): number {
 }
 
 /**
- * Parses numeric strings like "6000", "80k", "1.5k", "150k", "₦59,000", "#58,000", "2m"
+ * Parses numeric strings like "6000", "80k", "1.5k", "150k", "₦59,000", "#58,000", "2m",
+ * or natural language sentences containing an amount like "Spent 12k on shop generator fuel"
+ * or "Recorded an expense of 12,000 for shop generator fuel".
  */
 export function parseNairaAmount(text: string): number | null {
   if (!text) return null;
-  const cleaned = text.trim().toLowerCase().replace(/[₦#,]/g, '');
-  
-  // 80k or 1.5k
-  const kMatch = cleaned.match(/^([0-9.]+)\s*k$/);
-  if (kMatch) {
-    const num = parseFloat(kMatch[1]);
+  const raw = text.trim();
+
+  // 1. Direct standalone clean parse
+  const cleaned = raw.toLowerCase().replace(/[₦#,]/g, '').trim();
+  const kDirect = cleaned.match(/^([0-9.]+)\s*k$/);
+  if (kDirect) {
+    const num = parseFloat(kDirect[1]);
     return isNaN(num) ? null : num * 1000;
   }
-
-  // 2m or 1.2m
-  const mMatch = cleaned.match(/^([0-9.]+)\s*m$/);
-  if (mMatch) {
-    const num = parseFloat(mMatch[1]);
+  const mDirect = cleaned.match(/^([0-9.]+)\s*m$/);
+  if (mDirect) {
+    const num = parseFloat(mDirect[1]);
     return isNaN(num) ? null : num * 1000000;
+  }
+  if (/^[0-9.]+$/.test(cleaned)) {
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? null : num;
+  }
+
+  // 2. Pattern extraction from natural phrase or sentence
+  // A. Currency prefixed: ₦12,000 or #12k or ₦12k
+  const currMatch = raw.match(/[₦#]\s*([0-9.,]+)\s*([km]?)\b/i);
+  if (currMatch) {
+    const val = parseFloat(currMatch[1].replace(/,/g, ''));
+    if (!isNaN(val)) {
+      const suffix = currMatch[2].toLowerCase();
+      if (suffix === 'k') return val * 1000;
+      if (suffix === 'm') return val * 1000000;
+      return val;
+    }
+  }
+
+  // B. Suffix amount: 12k, 1.5k, 2m
+  const suffixMatch = raw.match(/\b([0-9.]+)\s*([km])\b/i);
+  if (suffixMatch) {
+    const val = parseFloat(suffixMatch[1]);
+    if (!isNaN(val)) {
+      const suffix = suffixMatch[2].toLowerCase();
+      if (suffix === 'k') return val * 1000;
+      if (suffix === 'm') return val * 1000000;
+      return val;
+    }
+  }
+
+  // C. Standalone comma formatted numbers (e.g. 12,000 or 350,000)
+  const commaMatch = raw.match(/\b([0-9]{1,3}(?:,[0-9]{3})+)\b/);
+  if (commaMatch) {
+    const val = parseFloat(commaMatch[1].replace(/,/g, ''));
+    if (!isNaN(val)) return val;
+  }
+
+  // D. Number after preposition/verb: "expense of 12000", "spent 12000", "for 6000", "at 1500"
+  const prepNumMatch = raw.match(/\b(?:spent|paid|for|at|of|cost|worth|giving|gives|amount)?\s*([0-9]{3,8})\b/i);
+  if (prepNumMatch) {
+    const val = parseFloat(prepNumMatch[1]);
+    if (!isNaN(val)) return val;
   }
 
   const num = parseFloat(cleaned);
@@ -1676,8 +1720,8 @@ export async function processNaturalInput(
 
       // Expense from AI
       if (intent === 'RECORD_EXPENSE') {
-        const expCat = data.data.expenseCategory || detectExpenseCategory(input);
-        const expAmt = data.data.expenseAmount || data.data.totalAmount || parseNairaAmount(input) || 0;
+        const expCat = aiExpenseCategory || data.data.expenseCategory || detectExpenseCategory(input);
+        const expAmt = aiExpenseAmount || data.data.expenseAmount || data.data.totalAmount || parseNairaAmount(input) || 0;
         if (expAmt > 0) {
           const ev: BusinessEvent = {
             id: `ev-${Date.now()}`,
@@ -1703,8 +1747,8 @@ export async function processNaturalInput(
 
       // Customer Payment from AI
       if (intent === 'RECORD_CUSTOMER_PAYMENT') {
-        const custName = data.data.customerName || extractCustomerName(input) || 'Customer';
-        const payAmt = data.data.cashPaid || data.data.totalAmount || parseNairaAmount(input) || 0;
+        const custName = aiCustomerName || data.data.customerName || extractCustomerName(input) || 'Customer';
+        const payAmt = aiCashPaid || aiTotalAmount || data.data.cashPaid || data.data.totalAmount || parseNairaAmount(input) || 0;
         if (payAmt > 0) {
           const ev: BusinessEvent = {
             id: `ev-${Date.now()}`,
@@ -1735,8 +1779,8 @@ export async function processNaturalInput(
 
       // Customer Debt from AI
       if (intent === 'RECORD_DEBT_OWED') {
-        const custName = data.data.customerName || extractCustomerName(input) || 'Customer';
-        const owedAmt = data.data.outstandingDebt || data.data.totalAmount || parseNairaAmount(input) || 0;
+        const custName = aiCustomerName || data.data.customerName || extractCustomerName(input) || 'Customer';
+        const owedAmt = entities.outstandingDebt || aiTotalAmount || data.data.outstandingDebt || data.data.totalAmount || parseNairaAmount(input) || 0;
         if (owedAmt > 0) {
           const ev: BusinessEvent = {
             id: `ev-${Date.now()}`,
@@ -1767,10 +1811,10 @@ export async function processNaturalInput(
 
       // Stock Purchase from AI (e.g. "I bought 30 cartons from Musa at 12k each")
       if (intent === 'RECORD_PURCHASE_STOCK') {
-        const qty = data.data.quantity || 1;
-        const totalAmt = data.data.totalAmount || 0;
-        const supName = data.data.supplierName || 'Supplier';
-        const prodName = data.data.productName || 'Stock';
+        const qty = aiQuantity || data.data.quantity || 1;
+        const totalAmt = aiTotalAmount || aiExpenseAmount || data.data.totalAmount || parseNairaAmount(input) || 0;
+        const supName = aiSupplierName || data.data.supplierName || 'Supplier';
+        const prodName = aiProductName || data.data.productName || 'Stock';
         const ev: BusinessEvent = {
           id: `ev-${Date.now()}`,
           timestamp: new Date().toISOString(),
@@ -1893,8 +1937,8 @@ export async function processNaturalInput(
         };
       }
 
-      // Other intents from AI
-      if (interpretation) {
+      // Other conversational or informational intents from AI
+      if (interpretation && !intent.startsWith('RECORD_')) {
         return {
           isQuestion: false,
           plainResponseText: interpretation,
@@ -2231,6 +2275,8 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
   const isExplicitExpense =
     (lower.includes('spent') ||
       lower.startsWith('paid') ||
+      lower.includes('expense') ||
+      lower.includes('expenses') ||
       lower.includes('paid for rent') ||
       lower.includes('shop rent') ||
       lower.includes('stall rent') ||
@@ -2252,12 +2298,12 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
 
   if (isExplicitExpense) {
     const cat = detectExpenseCategory(lower);
-    // Specifically search for monetary amounts (#5k, ₦5,000, 15k, or following spent/paid)
+    // Specifically search for monetary amounts (#5k, ₦5,000, 15k, or following spent/paid/expense)
     const amtMatch =
       input.match(/(?:[₦#]\s*([0-9.,]+[km]?))/i) ||
       input.match(/([0-9.,]+[km])\b/i) ||
-      input.match(/(?:spent|paid)\s+(?:[₦#]?\s*([0-9.,]+[km]?))/i);
-    const amt = amtMatch ? parseNairaAmount(amtMatch[1]) : 0;
+      input.match(/(?:spent|paid|expense\s+(?:of|for)?)\s*(?:[₦#]?\s*([0-9.,]+[km]?))/i);
+    const amt = (amtMatch ? parseNairaAmount(amtMatch[1]) : null) || parseNairaAmount(input) || 0;
     if (amt && amt > 0) {
       const ev: BusinessEvent = {
         id: `ev-${Date.now()}`,
@@ -3293,14 +3339,33 @@ function detectExpenseCategory(text: string): ExpenseCategory {
   ) {
     return 'Procurement';
   }
-  if (lower.includes('transport') || lower.includes('fuel') || lower.includes('bus') || lower.includes('moving') || lower.includes('dispatch') || lower.includes('rider') || lower.includes('fare') || lower.includes('okada') || lower.includes('keke') || lower.includes('logistics')) {
+  if (
+    lower.includes('generator') ||
+    lower.includes('light') ||
+    lower.includes('electric') ||
+    lower.includes('nepa') ||
+    lower.includes('power') ||
+    lower.includes('bill') ||
+    lower.includes('water')
+  ) {
+    return 'Utilities';
+  }
+  if (
+    lower.includes('transport') ||
+    lower.includes('fuel') ||
+    lower.includes('bus') ||
+    lower.includes('moving') ||
+    lower.includes('dispatch') ||
+    lower.includes('rider') ||
+    lower.includes('fare') ||
+    lower.includes('okada') ||
+    lower.includes('keke') ||
+    lower.includes('logistics')
+  ) {
     return 'Transportation';
   }
   if (lower.includes('shop rent') || lower.includes('stall rent') || lower.includes('space rent') || /\brent\b/.test(lower)) {
     return 'Rent';
-  }
-  if (lower.includes('light') || lower.includes('electric') || lower.includes('nepa') || lower.includes('power') || lower.includes('generator') || lower.includes('bill') || lower.includes('water')) {
-    return 'Utilities';
   }
   if (lower.includes('packaging') || lower.includes('carton box') || lower.includes('nylon') || /(?:packaging|nylon|leather|carrier|shopping|plastic)\s*bags?/i.test(lower)) {
     return 'Packaging';

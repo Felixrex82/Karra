@@ -283,6 +283,24 @@ async function runTests() {
   }
   console.log('✅ TEST 14 PASSED: Follow-up cancelled cleanly.');
 
+  // Test 15: Generator fuel expense logged on first try with event created
+  console.log('\n▶ TEST 15: "Spent 12k on shop generator fuel" creates Expense event immediately');
+  state.pendingFollowUp = null;
+  const res15 = await processNaturalInput('Spent 12k on shop generator fuel.', state);
+  if (!res15.createdEvent) {
+    throw new Error(`TEST 15 FAILED: Expected createdEvent, got: ${JSON.stringify(res15)}`);
+  }
+  if (res15.createdEvent.type !== 'EXPENSE') {
+    throw new Error(`TEST 15 FAILED: Expected EXPENSE event, got ${res15.createdEvent.type}`);
+  }
+  if (res15.createdEvent.expenseAmount !== 12000) {
+    throw new Error(`TEST 15 FAILED: Expected expenseAmount 12000, got ${res15.createdEvent.expenseAmount}`);
+  }
+  if (res15.createdEvent.expenseCategory !== 'Utilities') {
+    throw new Error(`TEST 15 FAILED: Expected expenseCategory 'Utilities', got '${res15.createdEvent.expenseCategory}'`);
+  }
+  console.log('✅ TEST 15 PASSED: ₦12,000 generator fuel expense recorded on first try with Utilities category.');
+
   console.log('\n🎉 ALL NLP & EXPENSE TESTS PASSED SUCCESSFULLY!');
 }
 
