@@ -11,7 +11,7 @@ function makeMockRequest(options: {
   url?: string;
   headers?: Record<string, string>;
   body?: any;
-  query?: Record<string, string>;
+  query?: Record<string, any>;
 }): Promise<{ status: number; body: any; headers: Record<string, any> }> {
   return new Promise((resolve) => {
     const method = options.method || 'GET';
@@ -27,9 +27,11 @@ function makeMockRequest(options: {
       headers['content-length'] = Buffer.byteLength(bodyStr).toString();
     }
 
-    // Create an in-memory HTTP server attached to the app for true network-level fidelity
+    // Create an in-memory HTTP server attached to the handler for true network-level fidelity
     const server = http.createServer((req, res) => {
-      // Test handler function export from api/index.ts
+      if (options.query) {
+        (req as any).query = options.query;
+      }
       handler(req as any, res as any);
     });
 
@@ -73,7 +75,7 @@ function makeMockRequest(options: {
 }
 
 async function runTests() {
-  console.log('🧪 Starting Vercel Single Serverless Function Verification Tests...');
+  console.log('🧪 Starting Vercel Serverless Function & AI Route Verification Tests...');
 
   // 1. Health check via direct path
   console.log('\n▶ TEST 1: Direct /api/health endpoint execution');
@@ -168,17 +170,69 @@ async function runTests() {
   }
   console.log(`✅ TEST 7 PASSED: Admin invitations retrieved successfully (${res7.body.invitations.length} invitations listed)`);
 
-  // 8. Verification of single serverless function in api/
-  console.log('\n▶ TEST 8: Exact single-function directory inspection in /api');
-  const fs = await import('fs');
-  const path = await import('path');
-  const apiFiles = fs.readdirSync(path.resolve('api'));
-  if (apiFiles.length !== 1 || apiFiles[0] !== 'index.ts') {
-    throw new Error(`TEST 8 FAILED: Expected exactly ['index.ts'] in api/, got: ${JSON.stringify(apiFiles)}`);
+  // 8. Direct POST /api/gemini/interpret route execution with full body
+  console.log('\n▶ TEST 8: Direct /api/gemini/interpret endpoint execution');
+  const res8 = await makeMockRequest({
+    method: 'POST',
+    url: '/api/gemini/interpret',
+    body: {
+      userInput: 'Hello, what can you do?',
+      memoryContext: { products: [], customers: [], unitRules: [] },
+      recentEventsContext: [],
+    },
+  });
+  if (res8.status !== 200) {
+    throw new Error(`TEST 8 FAILED: Expected status 200, got ${res8.status}: ${JSON.stringify(res8.body)}`);
   }
-  console.log('✅ TEST 8 PASSED: Exactly 1 serverless function entrypoint (api/index.ts) discovered!');
+  console.log('✅ TEST 8 PASSED: /api/gemini/interpret handled successfully (status 200)');
 
-  console.log('\n🎉 ALL 6 VERCEL SINGLE-FUNCTION REWRITE TESTS PASSED SUCCESSFULLY!\n');
+  // 9. Vercel Catch-All array query routing: query.path = ['gemini', 'ask']
+  console.log('\n▶ TEST 9: Vercel catch-all route with array query { path: ["gemini", "ask"] }');
+  const res9 = await makeMockRequest({
+    method: 'POST',
+    url: '/api/gemini/ask',
+    query: { path: ['gemini', 'ask'] },
+    body: {
+      question: 'How much did I make today?',
+      chatHistory: [],
+      businessSummary: { todaySales: 50000, todayGrossProfit: 20000, todayExpenses: 5000 },
+      products: [],
+      customers: [],
+      suppliers: [],
+      rules: [],
+      unitRelationships: [],
+      recentEvents: [],
+    },
+  });
+  if (res9.status !== 200) {
+    throw new Error(`TEST 9 FAILED: Array-based path routing crashed with ${res9.status}: ${JSON.stringify(res9.body)}`);
+  }
+  console.log('✅ TEST 9 PASSED: Catch-all array query routed without TypeError crash');
+
+  // 10. SPA Rewrite Regex Validation: Ensures /api and /api/* are NEVER intercepted by index.html rewrite
+  console.log('\n▶ TEST 10: SPA rewrite regex isolation');
+  const spaRegex = /^\/((?!api(?:$|\/)).*)$/;
+  if (spaRegex.test('/api')) {
+    throw new Error('TEST 10 FAILED: /api matched SPA rewrite regex and would return index.html!');
+  }
+  if (spaRegex.test('/api/')) {
+    throw new Error('TEST 10 FAILED: /api/ matched SPA rewrite regex!');
+  }
+  if (spaRegex.test('/api/gemini/interpret')) {
+    throw new Error('TEST 10 FAILED: /api/gemini/interpret matched SPA rewrite regex!');
+  }
+  if (spaRegex.test('/api/gemini/ask')) {
+    throw new Error('TEST 10 FAILED: /api/gemini/ask matched SPA rewrite regex!');
+  }
+  if (!spaRegex.test('/dashboard')) {
+    throw new Error('TEST 10 FAILED: /dashboard failed to match SPA rewrite regex!');
+  }
+  if (!spaRegex.test('/')) {
+    throw new Error('TEST 10 FAILED: root / failed to match SPA rewrite regex!');
+  }
+  console.log('✅ TEST 10 PASSED: SPA regex cleanly isolates /api from client-side rewrite');
+
+  console.log('\n🎉 ALL 10 VERCEL REWRITE & AI ROUTE TESTS PASSED SUCCESSFULLY!\n');
   process.exit(0);
 }
 

@@ -4,7 +4,7 @@ import {
   generateContentWithRetryAndFallback,
   buildInterpretPrompt,
   buildAskSystemPrompt,
-} from '../server/geminiEngine';
+} from './geminiEngine';
 
 export const FOUNDER_EMAIL = 'olamidefelix54@gmail.com';
 export const FOUNDER_PASSWORD = '@Felixrex1';
@@ -244,11 +244,16 @@ function verifyAdminRequest(req: any): boolean {
 
 let genAIClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
+  const apiKey =
+    process.env.GEMINI_API_KEY ||
+    process.env.VITE_GEMINI_API_KEY ||
+    process.env.GOOGLE_API_KEY ||
+    process.env.GOOGLE_GENAI_API_KEY;
+
+  if (!apiKey || !apiKey.trim()) return null;
   if (!genAIClient) {
     genAIClient = new GoogleGenAI({
-      apiKey,
+      apiKey: apiKey.trim(),
       httpOptions: {
         headers: { 'User-Agent': 'aistudio-build' },
       },
@@ -272,7 +277,7 @@ function sendJson(res: any, statusCode: number, data: any) {
 
 /**
  * Single Serverless Function Entry Point for Vercel
- * Zero dependencies on local files, completely immune to ERR_MODULE_NOT_FOUND
+ * Self-contained in api/, immune to routing and ERR_MODULE_NOT_FOUND issues
  */
 export default async function handler(req: any, res: any) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -318,16 +323,22 @@ export default async function handler(req: any, res: any) {
     const [rawPathname, rawQueryString] = rawUrl.split('?');
     const urlParams = new URLSearchParams(rawQueryString || '');
 
-    let targetPath =
+    const pathCandidate: any =
       urlParams.get('__path') ||
       urlParams.get('path') ||
       req.query?.__path ||
-      req.query?.path ||
-      '';
+      req.query?.path;
+
+    let targetPath = '';
+    if (Array.isArray(pathCandidate)) {
+      targetPath = pathCandidate.filter(Boolean).join('/');
+    } else if (typeof pathCandidate === 'string') {
+      targetPath = pathCandidate;
+    }
 
     if (!targetPath) {
-      const routeMatches = req.headers?.['x-now-route-matches'] as string;
-      if (routeMatches) {
+      const routeMatches = req.headers?.['x-now-route-matches'];
+      if (typeof routeMatches === 'string') {
         const match = routeMatches.match(/1=([^&]+)/);
         if (match && match[1]) {
           targetPath = decodeURIComponent(match[1]);
@@ -336,22 +347,24 @@ export default async function handler(req: any, res: any) {
     }
 
     if (!targetPath) {
-      targetPath = rawPathname.replace(/^\/api\/?/, '').replace(/^\/+/, '');
+      targetPath = rawPathname.replace(/^\/api\/?/, '');
     }
 
-    targetPath = targetPath.replace(/^\/+/, '');
+    targetPath = targetPath.replace(/^\/+|\/+$/g, '').trim();
     const method = (req.method || 'GET').toUpperCase();
 
     // 1. Health
     if (targetPath === 'health' || targetPath === '') {
+      const hasAi = Boolean(getGenAI());
       return sendJson(res, 200, {
         status: 'ok',
-        geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+        geminiConfigured: hasAi,
+        apiKeyConfigured: hasAi,
         timestamp: new Date().toISOString(),
       });
     }
 
-    // 2. Admin Login - Direct Hardcoded Match for @Felixrex1
+    // 2. Admin Login - Direct Match for founder
     if (targetPath === 'admin/login' || targetPath === 'beta/admin/login') {
       if (method !== 'POST') {
         return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
@@ -672,6 +685,7 @@ export default async function handler(req: any, res: any) {
         const parsed = JSON.parse(response.text || '{}');
         return sendJson(res, 200, { success: true, data: parsed });
       } catch (err: any) {
+        console.error('[Gemini Interpret Error]:', err?.message || err);
         return sendJson(res, 200, {
           success: false,
           fallback: true,
@@ -731,24 +745,56 @@ export default async function handler(req: any, res: any) {
           config: { responseMimeType: 'application/json', temperature: 0.1 },
         });
 
-        let parsed: any = {};
+        let answerText = '';
+        let extractedMemories: any[] = [];
+        let recordedEvent: any = null;
+        let correctedEvent: any = null;
+        let deletedEventId: string | null = null;
+        let targetDescription: string | null = null;
+        let structuredAction: any = null;
+        let calendarDate: string | null = null;
+        let calendarAction: string | null = null;
+
         try {
-          parsed = JSON.parse(response.text || '{}');
+          const parsed = JSON.parse(response.text || '{}');
+          answerText = parsed.answer || response.text || 'I have noted that down for your business.';
+          extractedMemories = Array.isArray(parsed.memories) ? parsed.memories : [];
+          recordedEvent = parsed.recordedEvent || null;
+          correctedEvent = parsed.correctedEvent || null;
+          deletedEventId = parsed.deletedEventId || null;
+          targetDescription = parsed.targetDescription || null;
+          structuredAction = parsed.structuredAction || null;
+          calendarDate = parsed.calendarDate || null;
+          calendarAction = parsed.calendarAction || null;
         } catch {
-          parsed = { answer: response.text || 'I have noted that down for your business.' };
+          answerText = response.text || 'I have noted that down for your business.';
         }
 
         return sendJson(res, 200, {
           success: true,
-          answer: parsed.answer || 'I have noted that down for your business.',
-          data: parsed,
-          memories: parsed.memories || [],
-          recordedEvent: parsed.recordedEvent || null,
-          correctedEvent: parsed.correctedEvent || null,
-          deletedEventId: parsed.deletedEventId || null,
-          structuredAction: parsed.structuredAction || null,
+          answer: answerText,
+          data: {
+            answer: answerText,
+            memories: extractedMemories,
+            recordedEvent,
+            correctedEvent,
+            deletedEventId,
+            targetDescription,
+            structuredAction,
+            calendarDate,
+            calendarAction,
+          },
+          memories: extractedMemories,
+          recordedEvent,
+          correctedEvent,
+          deletedEventId,
+          targetDescription,
+          structuredAction,
+          calendarDate,
+          calendarAction,
         });
       } catch (err: any) {
+        console.error('[Gemini Ask Error]:', err?.message || err);
         return sendJson(res, 200, {
           success: false,
           fallback: true,
