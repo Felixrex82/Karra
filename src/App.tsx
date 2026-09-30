@@ -497,9 +497,28 @@ export default function App() {
       const result = await processNaturalInput(inputText, state);
 
       if (result.isQuestion) {
-        // If user asked a question, route to Questions tab or show toast with direct answer
-        setState((prev) => ({ ...prev, pendingFollowUp: null, conversationState: null }));
-        showToast(result.questionAnswer || result.plainResponseText, 'info');
+        // If user asked a question or sent greeting, record in chatHistory and navigate to Questions tab
+        const questionText = inputText;
+        const answerText = result.questionAnswer || result.plainResponseText || "How can I help you today?";
+        const userMsg: ChatMessage = {
+          id: `u-${Date.now()}`,
+          sender: 'user',
+          text: questionText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+        const aiMsg: ChatMessage = {
+          id: `ai-${Date.now()}`,
+          sender: 'assistant',
+          text: answerText,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+        setState((prev) => ({
+          ...prev,
+          pendingFollowUp: null,
+          conversationState: null,
+          chatHistory: [...(prev.chatHistory || []), userMsg, aiMsg],
+        }));
+        showToast(answerText, 'info');
         setActiveTab('questions');
       } else if (result.followUpRequired) {
         // Intelligent Follow-up question triggered (e.g. unknown product cost or missing info)

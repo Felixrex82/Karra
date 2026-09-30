@@ -530,11 +530,11 @@ app.post('/api/gemini/interpret', async (req, res) => {
       data: parsed,
     });
   } catch (error: any) {
-    console.log('Gemini interpretation fallback active; using deterministic NLP engine.');
+    console.error('[Gemini Interpret Error]:', error?.status, error?.message || error);
     res.json({
       success: false,
       fallback: true,
-      reason: 'AI service experiencing temporary demand spike; fallback to deterministic rules',
+      reason: error?.message || 'AI service experiencing temporary demand spike; fallback to deterministic rules',
     });
   }
 });
@@ -672,11 +672,11 @@ app.post('/api/gemini/ask', async (req, res) => {
       calendarAction,
     });
   } catch (error: any) {
-    console.log('Gemini Q&A fallback active; using deterministic calculation engine.');
+    console.error('[Gemini Ask Error]:', error?.status, error?.message || error);
     res.json({
       success: false,
       fallback: true,
-      reason: 'AI service experiencing temporary demand spike; using deterministic calculation',
+      reason: error?.message || 'AI service experiencing temporary demand spike; using deterministic calculation',
     });
   }
 });

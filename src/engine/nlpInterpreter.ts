@@ -1366,7 +1366,7 @@ export async function processNaturalInput(
   if (typeof window !== 'undefined' || process.env.TEST_API_URL) {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 12000); // 12-second client timeout ensures responses comfortably under 15s
+      const timeoutId = setTimeout(() => controller.abort(), 20000); // 20-second client timeout ensures resilient AI responses
 
       const response = await fetch('/api/gemini/interpret', {
       method: 'POST',
@@ -1543,8 +1543,21 @@ export async function processNaturalInput(
         };
       }
 
-      if (intent === 'BUSINESS_QUESTION') {
-        const directAnswer = answerBusinessQuestion(input, state);
+      if (intent === 'BUSINESS_QUESTION' || intent === 'GREETING_OR_HELP') {
+        const directAnswer =
+          data.data.conversationalAnswer ||
+          data.data.clarificationPrompt ||
+          (data.data.interpretationSummary && !data.data.interpretationSummary.toLowerCase().startsWith('the user is asking') ? data.data.interpretationSummary : null) ||
+          answerBusinessQuestion(input, state);
+        return {
+          isQuestion: true,
+          questionAnswer: directAnswer,
+          plainResponseText: directAnswer,
+        };
+      }
+
+      if ((intent === 'UNKNOWN' || intent === 'CLARIFICATION_NEEDED') && (data.data.conversationalAnswer || data.data.clarificationPrompt)) {
+        const directAnswer = data.data.conversationalAnswer || data.data.clarificationPrompt;
         return {
           isQuestion: true,
           questionAnswer: directAnswer,
@@ -4396,12 +4409,80 @@ export function answerBusinessQuestionWithMemory(
     }
   }
 
-  // 20. Generic fallback with contextual cue
+  // 20. Greetings & Friendly Chit-chat
+  if (/^(?:hello|hi|hey|good\s+morning|good\s+afternoon|good\s+evening|how\s+far|kedu|yo|greetings)\b/i.test(lower.trim())) {
+    const todaySales = todayEvents.reduce((acc, e) => acc + (e.totalRevenue || 0), 0);
+    const debtorCount = state.customers.filter((c) => (c.outstandingBalance || 0) > 0).length;
+    return {
+      answer: `Hello! I'm Karra, your AI business assistant. Today you have recorded ${formatNaira(todaySales)} in sales across ${todayEvents.length} transactions${debtorCount > 0 ? `, with ${debtorCount} customer${debtorCount > 1 ? 's' : ''} currently owing` : ''}. Tell me what you'd like to do — record a sale, log an expense, or ask any question about your store!`,
+    };
+  }
+
+  // 21. System Capabilities & Help ("What can you do?", "How does this work?", "Help")
+  if (
+    lower.includes('what can you do') ||
+    lower.includes('how do you work') ||
+    lower.includes('how does this work') ||
+    lower.includes('how to use') ||
+    lower.includes('who are you') ||
+    lower.includes('what is karra') ||
+    lower.includes('features') ||
+    lower.trim() === 'help' ||
+    lower.startsWith('help me')
+  ) {
+    return {
+      answer: `I am Karra, your AI business partner for running your store effortlessly! You can speak or type to me in plain words to:\n• Record sales or services (e.g. "Sold 3 bags of rice to Emeka for 45k" or "Did hair braiding for 15k")\n• Log business expenses (e.g. "Spent ₦4,000 on generator fuel")\n• Track customer debts & payments (e.g. "Amaka paid ₦20,000" or "Who owes me money?")\n• Ask questions about your profits, product margins, and stock anytime.`,
+    };
+  }
+
+  // 22. Business Overview / Performance Summary ("How is business?", "Summary", "Overview")
+  if (
+    lower.includes('how is business') ||
+    lower.includes('store summary') ||
+    lower.includes('business summary') ||
+    lower.includes('overview') ||
+    lower.includes('performance') ||
+    lower.includes('daily report')
+  ) {
+    const todaySales = todayEvents.reduce((acc, e) => acc + (e.totalRevenue || 0), 0);
+    const todayGross = todayEvents.reduce((acc, e) => acc + (e.grossProfit || 0), 0);
+    const todayExp = todayEvents.reduce((acc, e) => acc + (e.expenseAmount || 0), 0);
+    const totalDebts = state.customers.reduce((acc, c) => acc + (c.outstandingBalance || 0), 0);
+    return {
+      answer: `Here is your current store summary:\n• Today's Sales: ${formatNaira(todaySales)} (${todayEvents.length} transactions)\n• Estimated Gross Profit: ${formatNaira(todayGross)}\n• Today's Expenses: ${formatNaira(todayExp)}\n• Uncollected Customer Debts: ${formatNaira(totalDebts)}\n• Products in Catalog: ${state.products.length} products.`,
+    };
+  }
+
+  // 23. Inventory / Stock Inquiry
+  if (
+    lower.includes('what products') ||
+    lower.includes('list products') ||
+    lower.includes('my inventory') ||
+    lower.includes('what stock') ||
+    lower.includes('show products')
+  ) {
+    if (state.products.length === 0) {
+      return {
+        answer: "You don't have any products recorded in your catalog yet. You can tell me about what you sell (e.g. 'I sell bags of rice for ₦58,000 and cost is ₦50,000').",
+      };
+    }
+    const list = state.products
+      .slice(0, 6)
+      .map(
+        (p) =>
+          `• ${p.name}: Selling for ${p.normalSellingPrice ? formatNaira(p.normalSellingPrice) : 'price not set'}${p.currentStock !== undefined ? ` (${p.currentStock} in stock)` : ''}`
+      )
+      .join('\n');
+    return {
+      answer: `Here are the products currently in your store memory:\n${list}${state.products.length > 6 ? `\n...and ${state.products.length - 6} more.` : ''}`,
+    };
+  }
+
+  // 24. Intelligent, Warm Conversational Fallback
+  const todaySales = todayEvents.reduce((acc, e) => acc + (e.totalRevenue || 0), 0);
   const contextNote = activeCustomer ? ` (active customer context: ${activeCustomer.name})` : '';
   return {
-    answer: `Based on your business ledger: Today's sales are ${formatNaira(
-      todayEvents.reduce((acc, e) => acc + (e.totalRevenue || 0), 0)
-    )}${contextNote}. You can teach me notes (e.g. '${activeCustomer ? activeCustomer.name : 'Chuks'} promised to pay Friday'), debt updates, or ask any question about your profits.`,
+    answer: `I'm listening! Today you've recorded ${formatNaira(todaySales)} in sales${contextNote}. You can tell me to record a sale or expense (e.g. 'Sold 2 shirts for ₦10,000 to Emeka'), note a debt, or ask about your sales, debts, and profits.`,
   };
 }
 

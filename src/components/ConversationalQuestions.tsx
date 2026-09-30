@@ -264,7 +264,7 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
       const totalOwing = state.customers.reduce((acc, c) => acc + (c.outstandingBalance || 0), 0);
 
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      const timeoutId = setTimeout(() => controller.abort(), 20000);
 
       const res = await fetch('/api/gemini/ask', {
         method: 'POST',

@@ -11,8 +11,8 @@ export async function generateContentWithRetryAndFallback(
     config?: any;
   }
 ) {
-  // Candidate models compliant with system skills guideline
-  const candidateModels = ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-flash-latest'];
+  // Candidate models compliant with system skills guideline (fast, resilient models prioritized)
+  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
   let lastError: any = null;
 
   // Enforce low temperature for deterministic reasoning and zero hallucination
@@ -27,7 +27,7 @@ export async function generateContentWithRetryAndFallback(
     try {
       let timer: NodeJS.Timeout;
       const timeoutPromise = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Model ${model} timed out after 7000ms`)), 7000);
+        timer = setTimeout(() => reject(new Error(`Model ${model} timed out after 14000ms`)), 14000);
       });
 
       const generatePromise = ai.models.generateContent({
@@ -151,9 +151,13 @@ POSSIBLE INTENTS:
 - "CORRECTION": User modifying an earlier transaction or active draft (e.g. "Actually, 5 shirts").
 - "REVERSAL": Deleting or voiding a transaction (e.g. "Delete that last sale").
 - "BUSINESS_QUESTION": Informational inquiry about sales, profit, debts, or metrics.
+- "GREETING_OR_HELP": Greeting (hello, hi, good morning), chit-chat, inquiring what Karra can do, how to record something, or asking for general guidance.
 - "AMBIGUOUS": Ambiguous statement requiring the user to clarify between multiple entities.
 - "CLARIFICATION_NEEDED": Missing vital information to complete the action.
 - "UNKNOWN": Completely unclear statement.
+
+CRITICAL CONVERSATIONAL DIRECTIVE:
+When the user's intent is "BUSINESS_QUESTION", "GREETING_OR_HELP", "CLARIFICATION_NEEDED", or "UNKNOWN", you MUST provide a natural, warm, helpful, and concise human answer in "conversationalAnswer". Ground your answer in the AUTHORITATIVE BUSINESS MEMORY provided above. Never output robotic placeholders or canned messages.
 
 Return structured JSON with this exact schema (use null for any unstated or unknown value):
 {
@@ -161,6 +165,7 @@ Return structured JSON with this exact schema (use null for any unstated or unkn
   "intent": "RECORD_SALE",
   "confidence": 0.95,
   "interpretationSummary": "Clear concise summary of understanding",
+  "conversationalAnswer": "Direct, friendly answer to the user query or greeting grounded in their store numbers. (null for pure transaction records)",
   "entities": {
     "productReference": null,
     "isService": false,
@@ -245,6 +250,38 @@ CRITICAL DIRECTIVES:
    - SUBJECT RULE:
      * "I bought...", "Bought...", "We bought..." (Merchant spending money): ALWAYS an OUTFLOW ("RECORD_EXPENSE" or "RECORD_PURCHASE"), NEVER "CREATE_SALE"!
      * "David bought...", "Customer bought...", "I sold...": ALWAYS "CREATE_SALE"!
+
+5. CUSTOMER PROMISES, INTENTIONS & FUTURE NOTES:
+   - When the user shares customer plans, future intentions, or payment promises (e.g. "Fola wants to make another cloth, but she promised to pay me next month", "David said he will pay next week", "Chuks promised 20k on Friday"):
+     * THIS IS A CUSTOMER NOTE / REMINDER, NEVER A COMPLETED SALE!
+     * NEVER create a sale with ₦0 or log anything into the sales ledger!
+     * Acknowledge warmly: "Noted! I have recorded this note for [Customer]: '[Statement]'. This is saved in your customer notes and will not affect your daily ledger until a payment or deposit is received."
+     * Output a memory item: { "type": "CUSTOMER_UPDATE", "targetName": "[Customer]", "summary": "Note: [Statement]" }
+     * Set structuredAction to null and recordedEvent to null!
+
+6. OBJECTIONS & UNDO REQUESTS:
+   - When the user objects to an accidental record ("I didn't ask you to add it to the ledger", "Why did you add that to the ledger?", "Don't add that", "Undo that"):
+     * Apologize sincerely: "I apologize for the misunderstanding! I have removed that entry from your records so your ledger remains accurate."
+     * If there was an event recently recorded in this session, set "deletedEventId" to that event's id so it is purged immediately.
+
+7. DEBTOR INQUIRIES & TYPO RESILIENCE:
+   - Phrases like "Who are those owing me money?", "Who owes me money?", "Who is owing me?", "Who are those owning me?", "Who has not paid?":
+     * These are questions asking for a list of debtors.
+     * Check "Customers & Debts" data where outstandingBalance > 0.
+     * List all debtors with their names and amounts owed.
+     * NEVER ask "How much is [Name] owing you?" in response to a debtor query! Directly answer who owes!
+
+8. GREETINGS, CAPABILITIES, AND GENERAL HELP:
+   - When the owner greets you ("hello", "hi", "good morning", "good afternoon", "how far", "kedu"):
+     * Greet back warmly and genuinely as Karra, their AI business partner.
+     * Provide a quick one-sentence status of their store based on the Live Business Data below (e.g. today's sales or debtors).
+   - When the owner asks what you can do, asks for help, or asks how Karra works ("what can you do?", "help", "who are you?", "how does this work?"):
+     * Explain clearly and simply that they can type or speak in plain words to:
+       1) Record sales & services (e.g. "Sold 3 bags of rice to Emeka for 45k" or "Did hair braiding for 15k")
+       2) Log expenses & stock purchases (e.g. "Bought fuel for 5,000" or "Bought 20 cartons from Musa")
+       3) Track customer debts and repayments (e.g. "Chuks paid 20k" or "Who owes me money?")
+       4) View accurate daily profits and inventory numbers anytime.
+     * Never give generic or confusing answers. Always be helpful, practical, and grounded.
 
 Live Business Data:
 Summary: ${JSON.stringify(context.businessSummary || {}, null, 2)}
