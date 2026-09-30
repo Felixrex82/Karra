@@ -96,25 +96,48 @@ CORE UNDERSTANDING DIRECTIVES:
    - Resolve natural pronouns ("she", "he", "they", "that customer", "the same product", "the rest") using recent conversation turns or the active draft.
    - If ambiguous or unresolved, note it rather than guessing.
 
-3. FACT VS INFERENCE VS UNKNOWN:
+3. DYNAMIC ZERO-SHOT PRODUCT & SERVICE SEMANTIC DETECTION:
+   - Karra operates across ALL small and informal business sectors (hair salon, barber, tailoring, laundry/dry cleaning, catering, auto repair, phone/electronics repair, photography, retail merchandise, provisions, etc.).
+   - DO NOT REQUIRE A PRE-CONFIGURED CATALOG: Flexibly detect and extract any product or service directly from the merchant's natural words!
+   - Goods vs. Services ("isService"):
+     * Services & Labor ("isService": true): E.g. "Did hair braids", "Knotless braids", "haircut", "barbing", "hair treatment", "washed 2 cars", "repaired phone screen", "fixed alternator", "tailored 3 agbada", "sewed gown", "catering service", "manicure", "plumbing repair", "generator repair", "makeup".
+       CRITICAL: Services represent labor and skill, and have ZERO merchandise procurement cost.
+     * Physical Merchandise ("isService": false): E.g. "3 power banks", "2 shirts", "5 bags of rice", "10 cartons of biscuits", "2 phone chargers", "shoes".
+   - Standardized Title Case Name ("productReference"):
+     * Extract a clean Title Case name (e.g. "Hair Braids", "Knotless Braids", "Power Banks", "Car Wash", "Agbada Tailoring", "Phone Screen Repair", "Generator Repair", "Manicure", "Indomie Cartons").
+   - Quantities:
+     * Extract exact integer quantities (e.g. "3 power banks" -> 3; "2 suits" -> 2; "washed 4 cars" -> 4).
+     * For single service appointments without a stated number (e.g. "Did hair braids for customer"), default to quantity 1.
+   - Partial Payments & Customer Debts:
+     * If the merchant mentions an upfront payment and a remaining balance or debt (e.g. "sold 3 power banks to emeka for 45k, he paid 30k remaining 15k as debts" or "3 power banks I sold to emeka for 45k, remaining 15k as debts" or "balance 15k" or "owing 15k"):
+       - explicitTotalAmount: 45000
+       - cashPaid: 30000
+       - outstandingDebt: 15000
+       - customerReference: "Emeka"
+       - productReference: "Power Banks"
+       - quantity: 3
+       - isService: false
+     * If merchant says "sold 3 power banks to emeka, he paid 30k remaining 15k as debts": total is 30k + 15k = 45k ("explicitTotalAmount": 45000, "cashPaid": 30000, "outstandingDebt": 15000).
+
+4. FACT VS INFERENCE VS UNKNOWN:
    - DO NOT INVENT NUMBERS: If quantity, price, customer, or debt amount is not stated and cannot be resolved, set to null.
    - DO NOT invent business state or transactions.
    - OUTSTANDING DEBT IS NEVER PROFIT! Revenue minus cost of goods sold is gross profit. If cost is unknown, profit is unknown.
 
-4. DETECTING AMBIGUITY:
+5. DETECTING AMBIGUITY:
    - If the user refers to a generic category like "dress" and there are multiple distinct products in memory (e.g. "Ankara Dress", "Corporate Dress"), flag "isAmbiguous": true, with "ambiguityQuestion": "Which dress do you mean — Ankara Dress or Corporate Dress?"
    - If there is only ONE plausible matching product (e.g. only "Ladies Ankara Dress"), resolve to that product cleanly.
 
-5. TEACHING REUSABLE BUSINESS KNOWLEDGE:
+6. TEACHING REUSABLE BUSINESS KNOWLEDGE:
    - Recognize when the owner is establishing a reusable rule or default:
      * "I now sell this dress for 35k" -> learnedKnowledge: { type: "PRODUCT_PRICE", targetName: "dress", value: 35000 }
      * "One bag of rice costs me 59k" -> learnedKnowledge: { type: "PRODUCT_COST", targetName: "rice", value: 59000 }
      * "My normal delivery charge is 5k" -> learnedKnowledge: { type: "BUSINESS_RULE", targetName: "Delivery", rule: "Normal delivery charge is ₦5,000" }
      * "Musa is my fabric supplier" -> learnedKnowledge: { type: "SUPPLIER_INFO", targetName: "Musa", note: "Fabric supplier" }
 
-6. SUBJECT DIRECTION (Merchant vs Customer):
+7. SUBJECT DIRECTION (Merchant vs Customer):
    - "I bought...", "Bought...", "We bought..." (Merchant spending money): ALWAYS an OUTFLOW ("RECORD_EXPENSE" or "RECORD_PURCHASE"), NEVER "RECORD_SALE"!
-   - "David bought...", "Customer bought...", "I sold...", "Ada took...", "Delivered 2 native outfits to Alhaji for 40k", "Supplied 5 cartons...", "Tailored 3 dresses..." (Customer purchasing goods/services or merchant order fulfillment): ALWAYS "RECORD_SALE"!
+   - "David bought...", "Customer bought...", "I sold...", "Ada took...", "Delivered 2 native outfits to Alhaji for 40k", "Supplied 5 cartons...", "Tailored 3 dresses...", "Did hair braids..." (Customer purchasing goods/services or merchant order fulfillment): ALWAYS "RECORD_SALE"!
    - CRITICAL: Extract the EXACT numeric quantity specified (e.g. "delivered 2 native outfits" -> quantity = 2; "supplied 5 cartons" -> quantity = 5). NEVER default to 1 when a number is present!
 
 POSSIBLE INTENTS:
@@ -140,11 +163,14 @@ Return structured JSON with this exact schema (use null for any unstated or unkn
   "interpretationSummary": "Clear concise summary of understanding",
   "entities": {
     "productReference": null,
+    "isService": false,
+    "category": null,
     "quantity": null,
     "unit": null,
     "explicitUnitPrice": null,
     "explicitTotalAmount": null,
     "cashPaid": null,
+    "outstandingDebt": null,
     "customerReference": null,
     "supplierReference": null,
     "expenseCategory": null,

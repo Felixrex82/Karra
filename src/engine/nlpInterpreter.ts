@@ -92,9 +92,9 @@ export function extractSaleQuantity(
   }
 
   // 4. Standalone number followed by item/merchandise nouns:
-  // e.g. "2 native outfits", "2 outfits", "3 dresses", "2 bags of rice", "5 shirts"
+  // e.g. "2 native outfits", "2 outfits", "3 dresses", "2 bags of rice", "5 shirts", "3 power banks"
   const nounQtyMatch = input.match(
-    /\b([0-9]+)\s*(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?|outfits?|wears?|dresses?|gowns?|kaftans?|suits?|wigs?|fabrics?|clothes?|cloths?|caps?|hats?|trouser|trousers|jeans|skirt|skirts|cups?|tins?|plates?)\b/i
+    /\b([0-9]+)\s*(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?|outfits?|wears?|dresses?|gowns?|kaftans?|suits?|wigs?|fabrics?|clothes?|cloths?|caps?|hats?|trouser|trousers|jeans|skirt|skirts|cups?|tins?|plates?|power\s*banks?|chargers?|phones?|batteries?|cables?|braids?|attachments?|rolls?|creams?|oils?|soaps?)\b/i
   );
   if (nounQtyMatch) {
     const qty = parseInt(nounQtyMatch[1], 10);
@@ -105,15 +105,20 @@ export function extractSaleQuantity(
   const allNumWordMatches = [...input.matchAll(/\b([0-9]+)\s+([a-zA-Z]+)(?:\s+([a-zA-Z]+))?\b/g)];
   for (const m of allNumWordMatches) {
     const num = parseInt(m[1], 10);
+    if (isNaN(num) || num <= 0) continue;
     const w1 = m[2].toLowerCase();
-    // Skip currency suffixes, time of day, percentages, prepositions
-    if (['k', 'm', 'naira', 'pm', 'am', 'percent', 'pct', 'for', 'at', 'to', 'from', 'each', 'per', 'on', 'in'].includes(w1)) {
+    // Skip currency suffixes, time of day, percentages, prepositions, and transaction terms
+    if ([
+      'k', 'm', 'naira', 'pm', 'am', 'percent', 'pct', 'for', 'at', 'to', 'from',
+      'each', 'per', 'on', 'in', 'cash', 'debt', 'debts', 'balance', 'tonight',
+      'today', 'tomorrow', 'yesterday', 'naira'
+    ].includes(w1)) {
       continue;
     }
-    // Skip if preceded by "for", "at", "@", "₦", "#"
+    // Skip if preceded by "for", "at", "@", "₦", "#" or comma thousands separator
     const prefixIndex = m.index || 0;
     const prefix = input.substring(Math.max(0, prefixIndex - 10), prefixIndex).trim();
-    if (/(?:for|at|@|[₦#])$/i.test(prefix)) {
+    if (/(?:for|at|@|[₦#]|,)$/i.test(prefix)) {
       continue;
     }
     return { quantity: num, unit: w1 };
@@ -1088,8 +1093,13 @@ function isNewTransactionOrIntent(input: string): boolean {
   ) {
     return true;
   }
-  // Sale verbs
-  if (/\b(?:i sold|we sold|sold\s+[0-9]+|sold\s+some|sold\s+a\s+|selling)\b/i.test(lower)) {
+  // Sale and service execution
+  if (
+    /\b(?:i sold|we sold|sold\s+[0-9]+|sold\s+some|sold\s+a\s+|selling)\b/i.test(lower) ||
+    /\b(?:did|done|rendered|styled|fixed|repaired|installed|washed|cleaned|barbed|cut|tailored|sewed)\s+[a-zA-Z]+/i.test(lower) ||
+    isServiceSemantic('', lower) ||
+    /\b(?:power\s*banks?)\b/i.test(lower)
+  ) {
     return true;
   }
   // Spending / purchase / expense verbs
@@ -1400,11 +1410,18 @@ export async function processNaturalInput(
       // Normalize entities from Gemini conversation layer
       const entities = data.data.entities || {};
       const aiProductName = entities.productReference || data.data.productName;
+      const aiIsService = Boolean(
+        entities.isService ||
+        data.data.isService ||
+        (data.data.category && /service|salon|beauty|barbing|repair|cleaning|labor|tailoring/i.test(data.data.category))
+      );
+      const aiCategory = entities.category || data.data.category;
       const aiQuantity = entities.quantity !== undefined && entities.quantity !== null ? entities.quantity : (data.data.quantity || 1);
       const aiUnitPrice = entities.explicitUnitPrice !== undefined && entities.explicitUnitPrice !== null ? entities.explicitUnitPrice : data.data.unitPrice;
       const aiTotalAmount = entities.explicitTotalAmount !== undefined && entities.explicitTotalAmount !== null ? entities.explicitTotalAmount : data.data.totalAmount;
       const aiCustomerName = entities.customerReference || data.data.customerName;
       const aiCashPaid = entities.cashPaid !== undefined && entities.cashPaid !== null ? entities.cashPaid : data.data.cashPaid;
+      const aiOutstandingDebt = entities.outstandingDebt !== undefined && entities.outstandingDebt !== null ? entities.outstandingDebt : data.data.outstandingDebt;
       const aiSupplierName = entities.supplierReference || data.data.supplierName;
       const aiExpenseAmount = entities.expenseAmount !== undefined && entities.expenseAmount !== null ? entities.expenseAmount : (aiTotalAmount || data.data.expenseAmount);
       const aiExpenseCategory = entities.expenseCategory || data.data.expenseCategory;
@@ -1604,22 +1621,51 @@ export async function processNaturalInput(
         };
       }
 
-      // Single sale from AI (e.g. "David bought 2 bags of rice for #130k but paid #78k")
-      if (intent === 'RECORD_SALE' && (data.data.totalAmount || (Array.isArray(data.data.items) && data.data.items[0]?.totalAmount))) {
+      // Single sale from AI (e.g. "David bought 2 bags of rice for #130k but paid #78k" or "sold 3 power banks to emeka for 45k, he paid 30k remaining 15k as debts")
+      if (
+        intent === 'RECORD_SALE' &&
+        (aiTotalAmount ||
+          data.data.totalAmount ||
+          (Array.isArray(data.data.items) && data.data.items[0]?.totalAmount) ||
+          aiCashPaid !== undefined ||
+          aiOutstandingDebt !== undefined)
+      ) {
         const itemObj = Array.isArray(data.data.items) && data.data.items.length > 0 ? data.data.items[0] : null;
-        const pName = itemObj?.productName || data.data.productName || 'Items';
+        const pName = itemObj?.productName || aiProductName || data.data.productName || 'Items';
         const prod = matchKnownProduct(pName, state.products) || {
           name: pName,
           currentCost: 0,
-          normalSellingPrice: itemObj?.unitPrice || data.data.unitPrice || 0,
+          normalSellingPrice: itemObj?.unitPrice || aiUnitPrice || data.data.unitPrice || 0,
         };
 
-        const qty = itemObj?.quantity || data.data.quantity || 1;
-        const totalRev = itemObj?.totalAmount || data.data.totalAmount || ((itemObj?.unitPrice || data.data.unitPrice || 0) * qty);
-        const cash = data.data.cashPaid !== undefined ? data.data.cashPaid : (totalRev - (data.data.outstandingDebt || 0));
-        const receivable = data.data.outstandingDebt !== undefined ? data.data.outstandingDebt : Math.max(0, totalRev - cash);
+        const qty = itemObj?.quantity || aiQuantity || data.data.quantity || 1;
+        let totalRev =
+          itemObj?.totalAmount ||
+          aiTotalAmount ||
+          data.data.totalAmount ||
+          ((itemObj?.unitPrice || aiUnitPrice || data.data.unitPrice || 0) * qty);
+
+        const rawCash = itemObj?.cashPaid !== undefined ? itemObj.cashPaid : (aiCashPaid !== undefined ? aiCashPaid : data.data.cashPaid);
+        const rawDebt = itemObj?.outstandingDebt !== undefined ? itemObj.outstandingDebt : (aiOutstandingDebt !== undefined ? aiOutstandingDebt : data.data.outstandingDebt);
+
+        let cash = rawCash;
+        let receivable = rawDebt;
+
+        if (totalRev > 0 && cash !== undefined && cash !== null && (receivable === undefined || receivable === null)) {
+          receivable = Math.max(0, totalRev - cash);
+        } else if (totalRev > 0 && receivable !== undefined && receivable !== null && (cash === undefined || cash === null)) {
+          cash = Math.max(0, totalRev - receivable);
+        } else if ((!totalRev || totalRev <= 0) && cash !== undefined && cash !== null && receivable !== undefined && receivable !== null) {
+          totalRev = cash + receivable;
+        } else if (cash === undefined || cash === null) {
+          cash = receivable !== undefined && receivable !== null ? Math.max(0, totalRev - receivable) : totalRev;
+          receivable = receivable !== undefined && receivable !== null ? receivable : 0;
+        } else if (receivable === undefined || receivable === null) {
+          receivable = Math.max(0, totalRev - cash);
+        }
+
         const unit = itemObj?.unit || data.data.unit || '';
-        const custName = data.data.customerName || extractCustomerName(input);
+        const custName = aiCustomerName || data.data.customerName || extractCustomerName(input);
 
         // Resolve unit cost accurately (wholesale bag vs retail bowl)
         const costRes = resolveProductCostForUnit(prod, unit, state);
@@ -1630,8 +1676,13 @@ export async function processNaturalInput(
         const singularName = prodDisplayName.replace(/s$/i, '');
         const isGenericItem = prodDisplayName.toLowerCase() === 'item' || prodDisplayName.toLowerCase() === 'items';
         const isCustomerOrDeliverySale = Boolean(custName) || /\b(?:delivered|supplied|sent|dispatched|sewed|tailored|gave)\b/i.test(input);
+        const isService = Boolean(
+          aiIsService ||
+          itemObj?.isService ||
+          isServiceSemantic(prodDisplayName, input)
+        );
 
-        if (unitCost === 0 && !isGenericItem && !isCustomerOrDeliverySale) {
+        if (unitCost === 0 && !isGenericItem && !isCustomerOrDeliverySale && !isService) {
           const pendingEvent: Partial<BusinessEvent> = {
             rawUserText: input,
             productName: prodDisplayName,
@@ -1663,9 +1714,9 @@ export async function processNaturalInput(
           quantity: qty,
           totalRevenue: totalRev,
           cashReceived: cash,
-          unitCostAtTime: unitCost > 0 ? unitCost : undefined,
-          costIsEstimate: costRes.isEstimate,
-          costEstimateBasis: costRes.costBasis,
+          unitCostAtTime: isService ? 0 : (unitCost > 0 ? unitCost : undefined),
+          costIsEstimate: isService ? false : costRes.isEstimate,
+          costEstimateBasis: isService ? 'service' : costRes.costBasis,
         });
 
         const ev: BusinessEvent = {
@@ -1675,20 +1726,22 @@ export async function processNaturalInput(
           timeStr,
           type: 'SALE',
           rawUserText: input,
-          systemResponseText: `Got it. Sold ${qty} ${unit ? `${unit} ` : ''}${prod.name} for ${formatNaira(totalRev)}. Paid: ${formatNaira(cash)}.${receivable > 0 ? ` ${custName ? custName : 'Customer'} still owes ${formatNaira(receivable)}.` : ''}`,
+          systemResponseText: isService
+            ? `Got it. Recorded ${prod.name} service for ${formatNaira(totalRev)}.${cash < totalRev ? ` Paid: ${formatNaira(cash)}.${receivable > 0 ? ` ${custName ? custName : 'Customer'} still owes ${formatNaira(receivable)}.` : ''}` : ''}`
+            : `Got it. Sold ${qty} ${unit ? `${unit} ` : ''}${prod.name} for ${formatNaira(totalRev)}. Paid: ${formatNaira(cash)}.${receivable > 0 ? ` ${custName ? custName : 'Customer'} still owes ${formatNaira(receivable)}.` : ''}`,
           productName: prod.name,
           customerName: custName,
           quantity: qty,
-          unit: unit || undefined,
+          unit: unit || (isService ? 'service' : undefined),
           unitSellingPrice: totalRev / qty,
           totalRevenue: totalRev,
           cashReceived: cash,
           receivableAdded: receivable,
-          unitCostAtTime: metrics.unitCostAtTime,
-          totalCostAtTime: metrics.totalCostAtTime,
-          costIsEstimate: metrics.costIsEstimate,
-          costEstimateBasis: metrics.costEstimateBasis,
-          grossProfit: metrics.grossProfit,
+          unitCostAtTime: isService ? 0 : metrics.unitCostAtTime,
+          totalCostAtTime: isService ? 0 : metrics.totalCostAtTime,
+          costIsEstimate: isService ? false : metrics.costIsEstimate,
+          costEstimateBasis: isService ? 'service' : metrics.costEstimateBasis,
+          grossProfit: isService ? totalRev : metrics.grossProfit,
           headline: data.data.headline,
           summary: data.data.summary,
         };
@@ -1696,6 +1749,17 @@ export async function processNaturalInput(
         const finalEv = ensureEventHeadlineAndSummary(ev);
 
         const memoryUpdates: MemoryUpdateItem[] = [];
+        if (!state.products.some(p => p.name.toLowerCase() === prodDisplayName.toLowerCase())) {
+          memoryUpdates.push({
+            type: 'BUSINESS_RULE',
+            summary: `Registered ${isService ? 'service' : 'product'}: ${prodDisplayName} (Normal rate: ${formatNaira(totalRev / qty)})`,
+            data: {
+              name: prodDisplayName,
+              isService,
+              defaultPrice: totalRev / qty,
+            },
+          });
+        }
         if (receivable > 0 && custName) {
           memoryUpdates.push({
             type: 'CUSTOMER_DEBT',
@@ -1704,7 +1768,7 @@ export async function processNaturalInput(
               customerName: custName,
               balanceAdded: receivable,
               date: todayStr,
-              note: `Debt from purchase of ${qty} ${unit ? `${unit} ` : ''}${prod.name}`,
+              note: `Debt from ${isService ? 'service' : 'purchase'} of ${qty} ${unit ? `${unit} ` : ''}${prod.name}`,
             },
           });
         }
@@ -2122,7 +2186,21 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
   }
 
   // 5. Customer Debt Payment ("Ada paid me 40k today", "Chuks paid 50k", "John paid me" - ONLY when not a product sale)
-  const isSaleContext = lower.includes('bought') || lower.includes('sold') || lower.includes('purchase') || matchKnownProduct(lower, state.products);
+  const isSaleContext =
+    lower.includes('bought') ||
+    lower.includes('sold') ||
+    lower.includes('purchase') ||
+    lower.includes('supplied') ||
+    lower.includes('delivered') ||
+    lower.includes('installed') ||
+    lower.includes('tailored') ||
+    lower.includes('sewed') ||
+    lower.includes('repaired') ||
+    lower.includes('washed') ||
+    lower.includes('charged') ||
+    isServiceSemantic('', input) ||
+    matchKnownProduct(lower, state.products) !== null;
+
   if (!isSaleContext && (lower.includes('paid me') || lower.includes('brought money') || lower.includes('cleared debt') || lower.includes('paid debt'))) {
     const custMatch = matchKnownCustomer(lower, state.customers) || extractCustomerName(input);
     const custName = typeof custMatch === 'object' && custMatch !== null ? custMatch.name : (custMatch || 'Customer');
@@ -2175,8 +2253,16 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
     }
   }
 
-  // 6. Customer Debt Owed ("Chuks is owing me 80k", "David owes me" - ONLY when not a product sale)
-  if (!isSaleContext && (lower.includes('owing') || lower.includes('owes') || lower.includes('debt'))) {
+  // 6. Customer Debt Owed ("Chuks is owing me 80k", "David owes me" - ONLY when not a product sale or partial payment)
+  const isStandaloneDebt =
+    !isSaleContext &&
+    !lower.includes('remaining') &&
+    !lower.includes('as debts') &&
+    !lower.includes('as debt') &&
+    !lower.includes('balance') &&
+    (lower.includes('owing') || lower.includes('owes') || lower.includes('is in debt') || /\bdebt\b/i.test(lower));
+
+  if (isStandaloneDebt) {
     const custMatch = matchKnownCustomer(lower, state.customers) || extractCustomerName(input);
     const custName = typeof custMatch === 'object' && custMatch !== null ? custMatch.name : (custMatch || 'Customer');
     const amtMatch = input.match(/(?:[₦#]?\s*([0-9.,]+[km]?))/i);
@@ -2244,7 +2330,8 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
 
   const isSaleStatement =
     !isMerchantBuying &&
-    (lower.includes('sold') ||
+    (isServiceSemantic('', input) ||
+      lower.includes('sold') ||
       lower.includes('delivered') ||
       lower.includes('supplied') ||
       lower.includes('dispatched') ||
@@ -2262,9 +2349,13 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
       lower.includes('each') ||
       lower.includes('at #') ||
       lower.includes('@') ||
+      lower.includes('power bank') ||
+      lower.includes('powerbank') ||
+      lower.includes('charger') ||
+      /\b(?:remaining|balance)\s+(?:[0-9.,]+[km]?)\s*(?:as\s+)?debts?\b/i.test(lower) ||
       matchKnownProduct(lower, state.products) !== null ||
       matchKnownCustomer(lower, state.customers) !== null ||
-      /^[0-9]+\s*(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?|outfits?|gowns?|clothes?|dresses?|suits?)/i.test(input));
+      /^[0-9]+\s*(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?|outfits?|gowns?|clothes?|dresses?|suits?|power\s*banks?|chargers?|phones?|braids?|wigs?)/i.test(input));
 
   if (isSaleStatement) {
     const saleResult = parseSaleStatement(input, state);
@@ -2558,25 +2649,73 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
   }
 
   // 4. Extract Cash Paid vs Debt:
-  // "he paid 100k" / "paid 90k" / "paid for 3"
+  // A. Extract Debt Amount Mentioned (e.g. "remaining 15k as debts", "balance 15k", "owes 15k", "15k as debts", "will transfer 18k balance")
+  let debtMentioned: number | null = null;
+  const debtMatch =
+    input.match(/(?:remaining|balance|remains|owing|owes|left\s+with|debt\s+(?:of|is)?)\s*(?:of\s+)?(?:[₦#]?\s*([0-9.,]+[km]?))/i) ||
+    input.match(/([0-9.,]+[km]?)\s*(?:as\s+)?debts?\b/i) ||
+    input.match(/(?:will\s+transfer|will\s+pay|to\s+balance)\s*(?:[₦#]?\s*([0-9.,]+[km]?))/i);
+  if (debtMatch) {
+    const dVal = parseNairaAmount(debtMatch[1]);
+    if (dVal !== null && dVal > 0) {
+      debtMentioned = dVal;
+    }
+  }
+
+  // B. Extract Cash Paid / Received (e.g. "he paid 30k", "received 15k cash", "paid 20,000 cash", "collected 15k", "she gave 20k")
+  let cashMentioned: number | null = null;
+  const cashMatch =
+    input.match(/(?:he\s+paid|she\s+paid|they\s+paid|cash\s+paid|paid|received|collected|gives?|gave|brought|transferred|sent)\s*(?:[₦#]?\s*([0-9.,]+[km]?))/i) ||
+    input.match(/([0-9.,]+[km]?)\s*(?:cash|upfront|down\s*payment|now)\b/i);
+  if (cashMatch) {
+    const cVal = parseNairaAmount(cashMatch[1]);
+    if (cVal !== null && cVal > 0) {
+      cashMentioned = cVal;
+    }
+  }
+
+  // Check paid for quantity (e.g. "bought 5 but only paid for 3")
+  const paidForQtyMatch = input.match(/paid\s+for\s+([0-9]+)/i);
+  let paidForQty: number | null = null;
+  if (paidForQtyMatch) {
+    paidForQty = parseInt(paidForQtyMatch[1], 10);
+  }
+
+  // C. Reconcile totalRevenue, cashReceived, and receivableAdded:
   let cashReceived = totalRevenue;
   let receivableAdded = 0;
 
-  const paidPartialMatch = input.match(/paid\s+(?:[₦#]?\s*([0-9.,]+[km]?))/i);
-  if (paidPartialMatch) {
-    const paidAmt = parseNairaAmount(paidPartialMatch[1]);
-    if (paidAmt !== null) {
-      cashReceived = paidAmt;
-      receivableAdded = Math.max(0, totalRevenue - cashReceived);
+  if (cashMentioned !== null && debtMentioned !== null) {
+    // Both cash and debt are explicit (e.g. "sold 3 power banks to emeka, he paid 30k remaining 15k as debts")
+    if (totalRevenue <= 0 || totalRevenue === cashMentioned) {
+      totalRevenue = cashMentioned + debtMentioned;
+      unitPrice = totalRevenue / quantity;
     }
-  } else {
-    // "bought 5 but only paid for 3"
-    const paidForQtyMatch = input.match(/paid\s+for\s+([0-9]+)/i);
-    if (paidForQtyMatch) {
-      const paidQty = parseInt(paidForQtyMatch[1], 10);
-      cashReceived = paidQty * unitPrice;
-      receivableAdded = Math.max(0, totalRevenue - cashReceived);
+    cashReceived = cashMentioned;
+    receivableAdded = debtMentioned;
+  } else if (debtMentioned !== null) {
+    // Debt is explicit (e.g. "3 power banks I sold to emeka for 45k, remaining 15k as debts")
+    receivableAdded = debtMentioned;
+    if (totalRevenue > 0) {
+      cashReceived = Math.max(0, totalRevenue - receivableAdded);
+    } else {
+      totalRevenue = receivableAdded;
+      cashReceived = 0;
+      unitPrice = totalRevenue / quantity;
     }
+  } else if (cashMentioned !== null) {
+    // Cash is explicit (e.g. "Did hair braids for customer, received 15k cash" or "for 45k, he paid 30k")
+    cashReceived = cashMentioned;
+    if (totalRevenue > 0 && totalRevenue > cashReceived) {
+      receivableAdded = totalRevenue - cashReceived;
+    } else if (totalRevenue <= 0 || totalRevenue === cashReceived) {
+      totalRevenue = cashReceived;
+      receivableAdded = 0;
+      unitPrice = totalRevenue / quantity;
+    }
+  } else if (paidForQty !== null) {
+    cashReceived = paidForQty * unitPrice;
+    receivableAdded = Math.max(0, totalRevenue - cashReceived);
   }
 
   // 5. Check if Cost is known in Business Memory (with Unit Yield awareness):
@@ -2675,12 +2814,14 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
   const singularName = prodDisplayName.replace(/s$/, '');
 
   const isDeliveryOrCustomerSale = Boolean(customerName) || /\b(?:delivered|supplied|sent|dispatched|sewed|tailored|made|gave)\b/i.test(input);
+  const isServiceOrPersonalLabour = isServiceSemantic(prodDisplayName, input);
 
   if (
     prodDisplayName.toLowerCase() === 'item' ||
     prodDisplayName.toLowerCase() === 'items' ||
     (isRateMultiplied && !product) ||
-    isDeliveryOrCustomerSale
+    isDeliveryOrCustomerSale ||
+    isServiceOrPersonalLabour
   ) {
     const rateText = isRateMultiplied
       ? ` (${quantity} × ${formatNaira(unitPrice)} = ${formatNaira(totalRevenue)} total revenue)`
@@ -2693,7 +2834,11 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
       ? 'custom order for'
       : 'sale of';
     const recipientText = customerName ? ` to ${customerName}` : '';
-    const plainResponse = `Got it. Recorded ${actionVerb} ${quantity} ${prodDisplayName.toLowerCase()}${recipientText} for ${formatNaira(totalRevenue)} (${formatNaira(unitPrice)} each)${rateText}. Added to your daily ledger and calendar.`;
+    let plainResponse = `Got it. Recorded ${actionVerb} ${quantity} ${prodDisplayName.toLowerCase()}${recipientText} for ${formatNaira(totalRevenue)} (${formatNaira(unitPrice)} each)${rateText}.`;
+    if (receivableAdded > 0) {
+      plainResponse += ` Paid: ${formatNaira(cashReceived)}. ${customerName || 'Customer'} still owes ${formatNaira(receivableAdded)}.`;
+    }
+    plainResponse += ` Added to your daily ledger and calendar.`;
     const event: BusinessEvent = {
       id: `ev-${Date.now()}`,
       timestamp: new Date().toISOString(),
@@ -2856,6 +3001,7 @@ function extractProductNameFromClause(clause: string): string {
   const clean = clause
     .replace(/^(?:[0-9]+|one|two|three|four|five|six|seven|eight|nine|ten)\s+/i, '')
     .replace(/(?:bags?|bowls?|cartons?|bottles?|shirts?|shoes?|pairs?|pieces?|units?|items?|packs?)\s+/i, '')
+    .replace(/\s+(?:i\s+sold|sold|to\s+[a-zA-Z]+).*$/i, '')
     .replace(/\s+(?:for|at|@|[₦#]|costing|each).*$/i, '')
     .trim();
   return clean || 'Items';
@@ -2866,6 +3012,41 @@ function extractProductNameFromClause(clause: string): string {
  */
 export function inferProductCategory(nameOrText: string): string {
   const lower = nameOrText.toLowerCase();
+  if (
+    lower.includes('braid') || lower.includes('hair') || lower.includes('salon') ||
+    lower.includes('barber') || lower.includes('barbing') || lower.includes('wig') ||
+    lower.includes('styling') || lower.includes('makeup') || lower.includes('nail') ||
+    lower.includes('beauty') || lower.includes('pedicure') || lower.includes('manicure') ||
+    lower.includes('treatment')
+  ) {
+    return 'Salon & Beauty Services';
+  }
+  if (
+    lower.includes('car wash') || lower.includes('mechanic') || lower.includes('alternator') ||
+    lower.includes('brake pad') || lower.includes('oil change') || lower.includes('tyre') ||
+    lower.includes('tire') || lower.includes('alignment') || lower.includes('auto repair')
+  ) {
+    return 'Automotive & Repairs';
+  }
+  if (
+    lower.includes('plumbing') || lower.includes('electrician') || lower.includes('carpenter') ||
+    lower.includes('painting') || lower.includes('cleaning') || lower.includes('dry clean') ||
+    lower.includes('laundry') || lower.includes('installation') || lower.includes('repair')
+  ) {
+    return 'Home & Trades Services';
+  }
+  if (
+    lower.includes('tailor') || lower.includes('sew') || lower.includes('agbada') ||
+    lower.includes('senator') || lower.includes('alteration') || lower.includes('fashion design')
+  ) {
+    return 'Fashion & Tailoring Services';
+  }
+  if (
+    lower.includes('photography') || lower.includes('photoshoot') || lower.includes('catering') ||
+    lower.includes('tutoring') || lower.includes('consulting') || lower.includes('graphic design')
+  ) {
+    return 'Professional Services';
+  }
   if (
     lower.includes('rice') || lower.includes('bean') || lower.includes('garri') ||
     lower.includes('yam') || lower.includes('grain') || lower.includes('flour') ||
@@ -2908,11 +3089,58 @@ export function inferProductCategory(nameOrText: string): string {
   if (
     lower.includes('phone') || lower.includes('charger') || lower.includes('cable') ||
     lower.includes('laptop') || lower.includes('battery') || lower.includes('electronic') ||
-    lower.includes('gadget') || lower.includes('headphone') || lower.includes('earphone')
+    lower.includes('gadget') || lower.includes('headphone') || lower.includes('earphone') ||
+    lower.includes('power bank') || lower.includes('powerbank')
   ) {
     return 'Electronics & Accessories';
   }
   return 'General Merchandise';
+}
+
+/**
+ * Flexibly checks whether an item or transaction represents labor, service, styling,
+ * or repairs across any merchant trade (meaning it has no unit procurement inventory cost).
+ */
+export function isServiceSemantic(prodName: string, text: string): boolean {
+  const lowerProd = (prodName || '').toLowerCase();
+  const lowerText = (text || '').toLowerCase();
+
+  const cat = inferProductCategory(prodName);
+  if (
+    cat === 'Salon & Beauty Services' ||
+    cat === 'Automotive & Repairs' ||
+    cat === 'Home & Trades Services' ||
+    cat === 'Fashion & Tailoring Services' ||
+    cat === 'Professional Services'
+  ) {
+    return true;
+  }
+
+  // Verbs of service execution
+  if (
+    /\b(?:did|done|rendered|styled|braided|plait|plaited|washed|cleaned|repaired|repair|fixed|serviced|installed|tailored|sewed|barbed|cut|cooked|baked|catering|photographed|tutored|plumbed|maintained)\b/i.test(
+      lowerText
+    )
+  ) {
+    return true;
+  }
+
+  // Common service noun patterns
+  const serviceKeywords = [
+    'braid', 'braids', 'knotless', 'haircut', 'barbing', 'hair', 'styling',
+    'makeup', 'nails', 'pedicure', 'manicure', 'treatment', 'wash', 'car wash',
+    'repair', 'repairs', 'fixing', 'install', 'installation', 'tailoring', 'sewing',
+    'service', 'catering', 'photography', 'shoot', 'cleaning', 'detailing', 'labour', 'labor',
+    'mechanic', 'electrician', 'plumbing', 'consultation'
+  ];
+
+  for (const kw of serviceKeywords) {
+    if (lowerProd.includes(kw) || lowerText.includes(kw)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -2984,29 +3212,57 @@ export function detectAndParseMultiItemSale(input: string, state: BusinessState)
 
   const candidateClauses: string[] = [];
   let cashPaidOverride: number | null = null;
+  let debtOverride: number | null = null;
 
   for (const part of rawParts) {
     const pTrim = part.trim();
     if (!pTrim) continue;
     const pLower = pTrim.toLowerCase();
 
-    // Check if this part is payment info (e.g. "he paid 50k", "David paid 100k", "paid cash")
-    if (
+    // Check if this part is payment info (e.g. "he paid 50k", "David paid 100k", "received 15k cash", "collected 15k", "she gave 20k")
+    const isPaymentPart =
       pLower.startsWith('paid') ||
       pLower.startsWith('he paid') ||
       pLower.startsWith('she paid') ||
       pLower.startsWith('they paid') ||
-      pLower.startsWith('cash paid')
-    ) {
+      pLower.startsWith('cash paid') ||
+      pLower.startsWith('received') ||
+      pLower.startsWith('collected') ||
+      pLower.startsWith('she gave') ||
+      pLower.startsWith('he gave') ||
+      pLower.startsWith('brought') ||
+      /\b(?:paid|received|collected|brought)\s+(?:[₦#]?\s*[0-9.,]+[km]?)/i.test(pLower) ||
+      /\b([0-9.,]+[km]?)\s*cash\b/i.test(pLower);
+
+    if (isPaymentPart) {
       const amtMatch = pTrim.match(/(?:[₦#]?\s*([0-9.,]+[km]?))/i);
       if (amtMatch) {
         cashPaidOverride = parseNairaAmount(amtMatch[1]);
       }
       continue;
     }
-    if (pLower.startsWith('owing') || pLower.startsWith('owes') || pLower.startsWith('balance later')) {
+
+    // Check if this part is debt / balance / remaining (e.g. "remaining 15k as debts", "balance 15k", "owing 20k", "owes 10k")
+    const isDebtPart =
+      pLower.startsWith('remaining') ||
+      pLower.startsWith('balance') ||
+      pLower.startsWith('owing') ||
+      pLower.startsWith('owes') ||
+      pLower.startsWith('left with') ||
+      pLower.startsWith('remains') ||
+      pLower.includes('as debts') ||
+      pLower.includes('as debt') ||
+      /\b(?:remaining|balance|remains|owes|owing)\s*(?:of\s+)?(?:[₦#]?\s*[0-9.,]+[km]?)/i.test(pLower) ||
+      /\b(?:will\s+transfer|will\s+pay)\b/i.test(pLower);
+
+    if (isDebtPart) {
+      const amtMatch = pTrim.match(/(?:[₦#]?\s*([0-9.,]+[km]?))/i);
+      if (amtMatch) {
+        debtOverride = parseNairaAmount(amtMatch[1]);
+      }
       continue;
     }
+
     if (
       pLower.includes('calendar') ||
       pLower.includes('change the input') ||
@@ -3258,6 +3514,16 @@ function matchKnownSupplier(text: string, suppliers: any[]) {
 }
 
 function extractCustomerName(text: string): string | undefined {
+  // 1. Check title prefixes with names: "for Dr. Chidinma", "to Mama Ngozi", "from Pastor John"
+  const titleMatch = text.match(/(?:to|from|for|with)\s+((?:Dr\.?|Mr\.?|Mrs\.?|Chief|Pastor|Mama|Papa|Sister|Brother)\s+[A-Za-z]+)/i);
+  if (titleMatch) {
+    const candidate = titleMatch[1].trim();
+    const parts = candidate.split(/\s+/);
+    if (parts.length >= 2 && !['for', 'to', 'from', 'with', 'at', 'each', 'cash', 'naira'].includes(parts[1].toLowerCase())) {
+      return candidate;
+    }
+  }
+
   const startMatch = text.match(/^([A-Za-z]+)\s+(?:bought|paid|is|took|purchased|collected|ordered|requested)/i);
   if (startMatch) {
     const name = startMatch[1].trim();
@@ -3269,7 +3535,7 @@ function extractCustomerName(text: string): string | undefined {
   const match = text.match(/(?:to|from|for|with)\s+([A-Za-z]+)/i);
   if (match) {
     const name = match[1].trim();
-    const invalid = ['i', 'we', 'he', 'she', 'they', 'you', 'it', 'my', 'the', 'a', 'an', 'today', 'yesterday', 'someone', 'customer', 'supplier', 'who', 'how', 'what', 'one', 'two', 'three'];
+    const invalid = ['i', 'we', 'he', 'she', 'they', 'you', 'it', 'my', 'the', 'a', 'an', 'today', 'yesterday', 'someone', 'customer', 'supplier', 'who', 'how', 'what', 'one', 'two', 'three', 'cash', 'naira', 'credit', 'balance', 'debts', 'debt'];
     if (!invalid.includes(name.toLowerCase())) {
       return name.charAt(0).toUpperCase() + name.slice(1);
     }
@@ -3278,9 +3544,21 @@ function extractCustomerName(text: string): string | undefined {
 }
 
 function extractProductName(text: string): string | undefined {
-  // 1. Check patterns like "sold some rice", "delivered outfits", "bought some oil"
+  const lower = text.toLowerCase();
+
+  // Known high-frequency service and merchant product phrases
+  if (lower.includes('knotless braids') || lower.includes('knotless braid')) return 'Knotless Braids';
+  if (lower.includes('hair treatment') || lower.includes('hair treatments')) return 'Hair Treatment';
+  if (lower.includes('hair braids') || lower.includes('hair braid')) return 'Hair Braids';
+  if (lower.includes('braids') || lower.includes('braid') || lower.includes('braided')) return 'Hair Braids';
+  if (lower.includes('haircut') || lower.includes('barbing')) return 'Haircut';
+  if (lower.includes('power banks') || lower.includes('power bank') || lower.includes('powerbank')) return 'Power Banks';
+  if (lower.includes('phone chargers') || lower.includes('phone charger') || lower.includes('chargers') || lower.includes('charger')) return 'Chargers';
+  if (lower.includes('earphones') || lower.includes('earphone') || lower.includes('headphones') || lower.includes('headphone')) return 'Headphones';
+
+  // 1. Check patterns like "sold some rice", "delivered outfits", "bought some oil", "did hair braids"
   const verbMatch = text.match(
-    /(?:sold|selling|sell|delivered|supplied|sent|dispatched|tailored|sewed|made|gave|bought|buy)\s+(?:some\s+|a\s+|an\s+|the\s+)?([a-zA-Z]+)/i
+    /(?:sold|selling|sell|delivered|supplied|sent|dispatched|tailored|sewed|made|gave|bought|buy|did|done|rendered|styled|fixed|repaired|installed|braided|plait|plaited)\s+(?:some\s+|a\s+|an\s+|the\s+)?([a-zA-Z]+(?:\s+[a-zA-Z]+)?)/i
   );
   if (verbMatch) {
     const candidate = verbMatch[1];

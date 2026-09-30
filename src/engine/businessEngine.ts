@@ -144,14 +144,32 @@ export function matchCustomerFuzzy(
   }
 
   // 2. Token-level fuzzy match
+  // Exclude common Nigerian commerce/English words so words like 'paid', 'banks', 'spent' never match customer names
+  const COMMON_COMMERCE_WORDS = new Set([
+    'paid', 'pays', 'paying', 'spent', 'spend', 'spending', 'bought', 'buying',
+    'sold', 'sells', 'selling', 'debt', 'debts', 'owes', 'owing', 'owed',
+    'bank', 'banks', 'power', 'item', 'items', 'cost', 'costs', 'price', 'prices',
+    'cash', 'give', 'gives', 'gave', 'giving', 'took', 'take', 'takes', 'taking',
+    'with', 'from', 'that', 'this', 'they', 'them', 'have', 'done', 'doing',
+    'will', 'some', 'good', 'said', 'sent', 'send', 'carton', 'bottle', 'piece',
+    'pair', 'bags', 'bag', 'bowl', 'bowls', 'today', 'yesterday', 'tomorrow',
+    'daily', 'month', 'week', 'year', 'sale', 'sales', 'shop', 'store', 'market',
+    'fuel', 'rent', 'light', 'bill', 'unit', 'units', 'each', 'rate', 'much',
+    'many', 'more', 'less', 'total', 'card', 'pos', 'transfer', 'balance', 'remain',
+    'remaining', 'remains', 'received', 'collected', 'account', 'invoice', 'order'
+  ]);
+
   const tokens = lower.match(/[a-z]{3,}/g) || [];
   const candidates: { customer: CustomerMemory; distance: number }[] = [];
 
   for (const token of tokens) {
+    if (COMMON_COMMERCE_WORDS.has(token)) continue;
     for (const c of customers) {
       const cName = c.name.toLowerCase();
       const dist = levenshteinDistance(token, cName);
-      if (dist <= 2 && Math.abs(token.length - cName.length) <= 2) {
+      // For short names (<=4 chars), only allow 1 edit distance; for 5+ allow up to 2
+      const maxDist = cName.length <= 4 || token.length <= 4 ? 1 : 2;
+      if (dist <= maxDist && Math.abs(token.length - cName.length) <= 1) {
         if (!candidates.some((cand) => cand.customer.id === c.id)) {
           candidates.push({ customer: c, distance: dist });
         }

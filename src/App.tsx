@@ -20,8 +20,8 @@ import {
 } from './types';
 import { initialSeedState, createEmptyBusinessState, isSampleSeedData } from './data/seedData';
 import { Header } from './components/Header';
-import { NaturalInputBar } from './components/NaturalInputBar';
-import { DailySummaryCard } from './components/DailySummaryCard';
+import { HomePageView } from './components/HomePageView';
+import { DailySalesVolumeModal } from './components/DailySalesVolumeModal';
 import { BusinessCalendar } from './components/BusinessCalendar';
 import { BusinessTimeline } from './components/BusinessTimeline';
 import { BusinessMemoryView } from './components/BusinessMemoryView';
@@ -137,6 +137,7 @@ export default function App() {
   const [reportPeriod, setReportPeriod] = useState<ReportPeriod>('weekly');
   const [activeInsightAction, setActiveInsightAction] = useState<BusinessPulseItem | null>(null);
   const [timelineFilter, setTimelineFilter] = useState<string>('ALL');
+  const [isDailySalesModalOpen, setIsDailySalesModalOpen] = useState(false);
 
   // Beta system modals
   const [isBetaFeedbackOpen, setIsBetaFeedbackOpen] = useState(false);
@@ -1566,147 +1567,21 @@ export default function App() {
             : 'max-w-6xl px-3.5 sm:px-6 py-4 sm:py-6 pb-24 md:pb-8 space-y-4 sm:space-y-6'
         }`}
       >
-        {/* Natural Input Prompt Engine - active exclusively on the Dashboard per user request */}
+        {/* Tab 1: DASHBOARD / HOMEPAGE VIEW (Redesigned per graphic) */}
         {activeTab === 'dashboard' && (
-          <NaturalInputBar
+          <HomePageView
+            state={state}
             onSendMessage={handleNaturalInput}
             pendingFollowUp={state.pendingFollowUp}
             onCancelFollowUp={() => setState((prev) => ({ ...prev, pendingFollowUp: null }))}
             isProcessing={isProcessingInput}
+            onNavigateToTab={(tab) => setActiveTab(tab)}
+            onOpenBusinessOverview={() => setIsDailySalesModalOpen(true)}
+            onExplainEvent={handleExplainEvent}
+            onDeleteEvent={handleDeleteEvent}
+            observantInsights={observantInsights}
+            onSelectInsightAction={handleSelectInsightAction}
           />
-        )}
-
-        {/* Tab 1: DASHBOARD VIEW */}
-        {activeTab === 'dashboard' && (
-          <div className="space-y-4 sm:space-y-6 animate-in fade-in duration-200">
-            {/* Today's Daily Business Summary Card */}
-            <DailySummaryCard
-              summary={selectedDaySummary}
-              events={state.events}
-              onExplainCalculation={() => handleExplainDaily(selectedDate)}
-              onOpenReports={() => handleOpenReport('weekly')}
-              onSelectDate={(date) => setSelectedDate(date)}
-              selectedDate={selectedDate}
-            />
-
-            {/* Observant Business Pulse - Grounded dynamically in actual recorded ledger state */}
-            <BusinessPulseCard
-              insights={observantInsights}
-              onSelectInsightAction={handleSelectInsightAction}
-            />
-
-            {/* Quick Preview of Today's Transactions (Distinct Ledger Card) */}
-            <div className="bg-white dark:bg-[#111726] rounded-2xl border border-slate-200/90 dark:border-slate-800 shadow-xs dark:shadow-slate-950/40 p-4 sm:p-6 transition-colors">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800/80 mb-3">
-                <div className="flex items-center space-x-2">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                  <h3 className="text-xs sm:text-sm font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
-                    {selectedDate === getTodayDateStr() ? "Today's" : selectedDate === getYesterdayDateStr() ? "Yesterday's" : `${selectedDate}`} Activity Ledger ({selectedDaySummary.eventsCount} events)
-                  </h3>
-                </div>
-                <button
-                  onClick={() => setActiveTab('timeline')}
-                  className="text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white underline min-h-[36px] flex items-center transition-colors"
-                >
-                  All Transactions →
-                </button>
-              </div>
-
-              {state.events.filter((e) => e.date === selectedDate && !e.isCorrected).length === 0 ? (
-                <p className="text-xs text-slate-500 dark:text-slate-400 py-4 text-center">
-                  No events logged yet for today. Type or speak a sale above to begin.
-                </p>
-              ) : (
-                <div className="space-y-2.5">
-                  {state.events
-                    .filter((e) => e.date === selectedDate && !e.isCorrected)
-                    .map((ev, idx) => {
-                      const displayEv = ensureEventHeadlineAndSummary(ev);
-                      return (
-                        <div
-                          key={ev.id ? `${ev.id}-${idx}` : `ev-${selectedDate}-${idx}`}
-                          className="p-3.5 rounded-xl bg-[#FCFDFE] dark:bg-[#151D2C] border border-slate-200/80 dark:border-slate-800/80 hover:border-slate-300 dark:hover:border-slate-700 text-xs transition-colors space-y-1.5"
-                        >
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
-                            <div className="flex items-center space-x-1.5 min-w-0">
-                              <div className="w-5 h-5 rounded-md bg-emerald-100 dark:bg-emerald-950/80 flex items-center justify-center shrink-0">
-                                <Sparkles className="w-3 h-3 text-emerald-700 dark:text-emerald-400" />
-                              </div>
-                              <span className="font-bold text-slate-900 dark:text-white truncate">
-                                {displayEv.headline}
-                              </span>
-                              {ev.isPromotion && (
-                                <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-950/70 text-amber-900 dark:text-amber-300 border border-amber-200/60 dark:border-amber-800/50 shrink-0">
-                                  PROMO
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="flex items-center justify-between sm:justify-end space-x-2 pt-1 sm:pt-0 shrink-0 font-mono font-bold">
-                              <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 font-normal">
-                                {ev.timeStr}
-                              </span>
-                              {ev.type === 'SALE' && ev.totalRevenue !== undefined && (
-                                <span className="text-emerald-700 dark:text-emerald-400">
-                                  +{formatNaira(ev.totalRevenue)}
-                                </span>
-                              )}
-                              {ev.type === 'EXPENSE' && ev.expenseAmount !== undefined && (
-                                <span className="text-red-600 dark:text-red-400">
-                                  −{formatNaira(ev.expenseAmount)}
-                                </span>
-                              )}
-                              {ev.type === 'CUSTOMER_DEBT' && (
-                                <span className="text-amber-700 dark:text-amber-400">
-                                  Owed: {formatNaira(ev.receivableAdded || ev.totalRevenue || 0)}
-                                </span>
-                              )}
-                              {ev.type === 'DEBT_PAYMENT' && (
-                                <span className="text-emerald-700 dark:text-emerald-400">
-                                  Paid: {formatNaira(ev.cashReceived || ev.totalRevenue || 0)}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* AI Generated Executive Summary */}
-                          <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-normal">
-                            {displayEv.summary}
-                          </p>
-
-                          {/* Footer with original note & action buttons */}
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 pt-1.5 border-t border-slate-100 dark:border-slate-800/60 text-[10px] sm:text-[11px]">
-                            <span className="text-slate-400 dark:text-slate-500 italic truncate max-w-md">
-                              "{ev.rawUserText}"
-                            </span>
-                            <div className="flex items-center space-x-2 shrink-0">
-                              {ev.grossProfit !== undefined && (
-                                <span className="text-emerald-700 dark:text-emerald-400 font-mono font-semibold">
-                                  Gross: {ev.grossProfit >= 0 ? '+' : ''}{formatNaira(ev.grossProfit)}
-                                </span>
-                              )}
-                              <button
-                                onClick={() => handleExplainEvent(ev)}
-                                className="text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 font-medium p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 min-h-[26px] cursor-pointer"
-                              >
-                                Explain math
-                              </button>
-                              <button
-                                onClick={() => handleDeleteEvent(ev.id)}
-                                className="text-red-500 dark:text-red-400 hover:text-red-700 dark:hover:text-red-300 font-medium p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/40 min-h-[26px] cursor-pointer"
-                                title="Delete this entry permanently"
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                </div>
-              )}
-            </div>
-          </div>
         )}
 
         {/* Tab 2: CALENDAR VIEW */}
@@ -1787,10 +1662,23 @@ export default function App() {
               onClearLedger={handleClearLedger}
               onResetDemo={handleResetDemo}
               onShowToast={showToast}
+              onBack={() => setActiveTab('dashboard')}
+              onOpenBusinessOverview={() => setIsDailySalesModalOpen(true)}
+              theme={theme}
+              onToggleTheme={toggleTheme}
             />
           </div>
         )}
       </main>
+
+      {/* Daily Sales Volume Trend Modal */}
+      <DailySalesVolumeModal
+        isOpen={isDailySalesModalOpen}
+        onClose={() => setIsDailySalesModalOpen(false)}
+        state={state}
+        selectedDate={selectedDate}
+        onSelectDate={(date) => setSelectedDate(date)}
+      />
 
       {/* Transparent Arithmetic Breakdown Modal ("How did you get this number?") */}
       <ExplainCalculationModal

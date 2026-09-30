@@ -301,6 +301,94 @@ async function runTests() {
   }
   console.log('✅ TEST 15 PASSED: ₦12,000 generator fuel expense recorded on first try with Utilities category.');
 
+  // Test 16: Power banks sale with partial payment and remaining debt
+  console.log('\n▶ TEST 16: "sold 3 power banks to emeka for 45k, he paid 30k remaining 15k as debts" logs sale and debt');
+  state.pendingFollowUp = null;
+  const res16 = await processNaturalInput('sold 3 power banks to emeka for 45k, he paid 30k remaining 15k as debts', state);
+  if (!res16.createdEvent) {
+    throw new Error(`TEST 16 FAILED: Expected createdEvent, got: ${JSON.stringify(res16)}`);
+  }
+  if (res16.createdEvent.type !== 'SALE') {
+    throw new Error(`TEST 16 FAILED: Expected SALE event, got ${res16.createdEvent.type}`);
+  }
+  if (res16.createdEvent.quantity !== 3) {
+    throw new Error(`TEST 16 FAILED: Expected quantity 3, got ${res16.createdEvent.quantity}`);
+  }
+  if (res16.createdEvent.totalRevenue !== 45000) {
+    throw new Error(`TEST 16 FAILED: Expected totalRevenue 45000, got ${res16.createdEvent.totalRevenue}`);
+  }
+  if (res16.createdEvent.cashReceived !== 30000) {
+    throw new Error(`TEST 16 FAILED: Expected cashReceived 30000, got ${res16.createdEvent.cashReceived}`);
+  }
+  if (res16.createdEvent.receivableAdded !== 15000) {
+    throw new Error(`TEST 16 FAILED: Expected receivableAdded 15000, got ${res16.createdEvent.receivableAdded}`);
+  }
+  if (res16.createdEvent.customerName !== 'Emeka') {
+    throw new Error(`TEST 16 FAILED: Expected customerName 'Emeka', got '${res16.createdEvent.customerName}'`);
+  }
+  const debtUpdate16 = res16.memoryUpdates?.find(m => m.type === 'CUSTOMER_DEBT');
+  if (!debtUpdate16 || debtUpdate16.data.balanceAdded !== 15000) {
+    throw new Error(`TEST 16 FAILED: Expected CUSTOMER_DEBT memory update with 15000, got ${JSON.stringify(debtUpdate16)}`);
+  }
+  console.log('✅ TEST 16 PASSED: 3 power banks sold to Emeka for ₦45k with ₦30k cash and ₦15k debt recorded cleanly.');
+
+  // Test 17: Front-loaded quantity power banks sale with debt
+  console.log('\n▶ TEST 17: "3 power banks I sold to emeka for 45k, remaining 15k as debts"');
+  state.pendingFollowUp = null;
+  const res17 = await processNaturalInput('3 power banks I sold to emeka for 45k, remaining 15k as debts', state);
+  if (!res17.createdEvent || res17.createdEvent.quantity !== 3 || res17.createdEvent.receivableAdded !== 15000 || res17.createdEvent.customerName !== 'Emeka') {
+    throw new Error(`TEST 17 FAILED: Unexpected event: ${JSON.stringify(res17.createdEvent)}`);
+  }
+  console.log('✅ TEST 17 PASSED: Front-loaded quantity statement properly recorded ₦15k debt to Emeka.');
+
+  // Test 18: Hair braiding salon service recorded immediately without cost obstruction
+  console.log('\n▶ TEST 18: "Did hair braids for customer, received 15k cash." records immediately');
+  state.pendingFollowUp = null;
+  const res18 = await processNaturalInput('Did hair braids for customer, received 15k cash.', state);
+  if (!res18.createdEvent) {
+    throw new Error(`TEST 18 FAILED: Expected createdEvent, got: ${JSON.stringify(res18)}`);
+  }
+  if (res18.createdEvent.totalRevenue !== 15000 || res18.createdEvent.cashReceived !== 15000) {
+    throw new Error(`TEST 18 FAILED: Expected revenue 15000, got ${res18.createdEvent.totalRevenue}`);
+  }
+  if (res18.createdEvent.productName !== 'Hair Braids') {
+    throw new Error(`TEST 18 FAILED: Expected productName 'Hair Braids', got '${res18.createdEvent.productName}'`);
+  }
+  console.log('✅ TEST 18 PASSED: Salon hair braiding service logged immediately with ₦15,000 revenue.');
+
+  // Test 19: Dynamic service detection for newly onboarded trade (Automotive/Cleaning - Car Wash)
+  console.log('\n▶ TEST 19: "Did car wash for customer, received 3k cash" dynamically recognized as service');
+  state.pendingFollowUp = null;
+  const res19 = await processNaturalInput('Did car wash for customer, received 3k cash', state);
+  if (!res19.createdEvent || res19.createdEvent.totalRevenue !== 3000 || res19.createdEvent.cashReceived !== 3000) {
+    throw new Error(`TEST 19 FAILED: Expected createdEvent with 3000 revenue, got: ${JSON.stringify(res19)}`);
+  }
+  if (!res19.createdEvent.productName || !res19.createdEvent.productName.toLowerCase().includes('car wash')) {
+    throw new Error(`TEST 19 FAILED: Expected car wash service, got ${res19.createdEvent.productName}`);
+  }
+  console.log('✅ TEST 19 PASSED: Car wash service recorded immediately without unit cost obstruction.');
+
+  // Test 20: Dynamic service detection with partial debt (Installation / Trade service)
+  console.log('\n▶ TEST 20: "Installed solar inverter for Chief for 180k, he paid 100k remaining 80k as debts"');
+  state.pendingFollowUp = null;
+  const res20 = await processNaturalInput('Installed solar inverter for Chief for 180k, he paid 100k remaining 80k as debts', state);
+  if (!res20.createdEvent || res20.createdEvent.totalRevenue !== 180000 || res20.createdEvent.receivableAdded !== 80000) {
+    throw new Error(`TEST 20 FAILED: Expected 180000 rev and 80000 debt, got: ${JSON.stringify(res20.createdEvent)}`);
+  }
+  if (res20.createdEvent.customerName !== 'Chief') {
+    throw new Error(`TEST 20 FAILED: Expected customerName 'Chief', got '${res20.createdEvent.customerName}'`);
+  }
+  console.log('✅ TEST 20 PASSED: Solar installation recorded with ₦100,000 cash and ₦80,000 debt to Chief.');
+
+  // Test 21: Tailoring fashion custom craft order
+  console.log('\n▶ TEST 21: "Tailored 3 agbada for Alhaji for 75k"');
+  state.pendingFollowUp = null;
+  const res21 = await processNaturalInput('Tailored 3 agbada for Alhaji for 75k', state);
+  if (!res21.createdEvent || res21.createdEvent.totalRevenue !== 75000 || res21.createdEvent.quantity !== 3) {
+    throw new Error(`TEST 21 FAILED: Expected 75000 rev and qty 3, got: ${JSON.stringify(res21.createdEvent)}`);
+  }
+  console.log('✅ TEST 21 PASSED: Tailoring custom craft logged immediately with ₦75,000 revenue for 3 units.');
+
   console.log('\n🎉 ALL NLP & EXPENSE TESTS PASSED SUCCESSFULLY!');
 }
 

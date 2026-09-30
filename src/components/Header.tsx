@@ -11,6 +11,7 @@ import {
   Moon,
   FileText,
   User,
+  Bell,
 } from 'lucide-react';
 import { NavigationTab, BusinessState } from '../types';
 import { KarraLogo } from './KarraLogo';
@@ -50,15 +51,17 @@ export const Header: React.FC<HeaderProps> = ({
       {activeTab !== 'questions' && (
         <header className="shrink-0 sticky top-0 z-30 bg-white/95 dark:bg-[#0B0F17]/90 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800/80 px-3 sm:px-6 py-2.5 sm:py-3 transition-colors">
         <div className="max-w-6xl mx-auto flex items-center justify-between gap-3">
-          {/* Brand & Business Identity */}
-          <div className="flex items-center space-x-2.5 sm:space-x-3 min-w-0 flex-1 md:flex-initial">
+          {/* Brand & Business Identity matching Graphic */}
+          <div
+            onClick={() => setActiveTab('dashboard')}
+            className="flex items-center space-x-2.5 sm:space-x-3 min-w-0 cursor-pointer"
+          >
             <KarraLogo size="sm" variant="green-bg" />
-            <h1
-              className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight truncate max-w-[200px] xs:max-w-xs sm:max-w-sm md:max-w-md"
-              title={businessName || 'My Business'}
-            >
-              {businessName || 'My Business'}
-            </h1>
+            <div className="min-w-0">
+              <span className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight leading-none block">
+                Karra
+              </span>
+            </div>
           </div>
 
           {/* Desktop Navigation Tabs (Hidden on mobile) */}
@@ -143,8 +146,8 @@ export const Header: React.FC<HeaderProps> = ({
           </nav>
 
           {/* Quick Header Actions */}
-          <div className="flex items-center space-x-1 sm:space-x-2 shrink-0">
-            {/* Download Reports Trigger */}
+          <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0">
+            {/* Download Reports Trigger (Retained per user request) */}
             <button
               id="btn-header-reports"
               type="button"
@@ -153,65 +156,59 @@ export const Header: React.FC<HeaderProps> = ({
               title="Download Weekly, Monthly, or Yearly Financial Reports"
             >
               <FileText className="w-3.5 h-3.5 text-emerald-400 dark:text-white" />
-              <span>Reports</span>
+              <span className="hidden xs:inline">Reports</span>
             </button>
 
-            {/* Profile Quick Button (Shown on desktop/tablet; on phone it's in the bottom dock) */}
-            <button
-              id="btn-header-profile-quick"
-              type="button"
-              onClick={() => setActiveTab('profile')}
-              className={`hidden md:flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition-all min-h-[36px] cursor-pointer ${
-                activeTab === 'profile'
-                  ? 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-700'
-                  : 'text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border-slate-200 dark:border-slate-700'
-              }`}
-              title="Store Profile & Bank Details"
-            >
-              <User className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-              <span>Profile</span>
-            </button>
-
-            {/* Dark / Light Mode Toggle */}
+            {/* Dark / Light Mode Toggle (Retained per user request) */}
             <button
               id="btn-toggle-theme"
               type="button"
               onClick={onToggleTheme}
-              className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-colors min-h-[36px]"
+              className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-[#132235] hover:bg-slate-200 dark:hover:bg-[#1A2E45] border border-slate-200 dark:border-slate-800 transition-colors min-h-[36px] cursor-pointer"
               title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
               aria-label={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
             >
               {theme === 'dark' ? (
-                <>
-                  <Sun className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="hidden sm:inline">Light</span>
-                </>
+                <Sun className="w-3.5 h-3.5 text-amber-400" />
               ) : (
-                <>
-                  <Moon className="w-3.5 h-3.5 text-slate-600" />
-                  <span className="hidden sm:inline">Dark</span>
-                </>
+                <Moon className="w-3.5 h-3.5 text-slate-600" />
               )}
             </button>
 
+            {/* Notifications Bell (from graphic) */}
+            <button
+              type="button"
+              onClick={() => onShowToast && onShowToast('Notifications active.', 'info')}
+              className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-[#132235] hover:bg-slate-200 dark:hover:bg-[#1A2E45] border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center transition-colors cursor-pointer"
+              title="Notifications"
+            >
+              <Bell className="w-4 h-4" />
+            </button>
+
+            {/* Profile Avatar Button (from graphic) */}
+            <button
+              id="btn-header-profile-quick"
+              type="button"
+              onClick={() => setActiveTab('profile')}
+              className={`w-9 h-9 rounded-full flex items-center justify-center border transition-all cursor-pointer shadow-xs ${
+                activeTab === 'profile'
+                  ? 'bg-emerald-500 text-white border-emerald-400 ring-2 ring-emerald-500/30'
+                  : 'bg-slate-100 dark:bg-[#18283D] text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-[#203652]'
+              }`}
+              title="Open Profile"
+            >
+              <User className="w-4 h-4" />
+            </button>
+
+            {/* Compact Sample Demo Button */}
             <button
               id="btn-reset-demo"
               onClick={onResetDemo}
-              className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 transition-colors min-h-[36px]"
+              className="hidden lg:flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 transition-colors min-h-[36px]"
               title="Load Sample Nigerian Demo Store"
             >
-              <RefreshCw className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-              <span className="hidden sm:inline">Sample Demo</span>
-            </button>
-
-            <button
-              id="btn-onboarding-help"
-              onClick={onOpenOnboarding}
-              className="flex items-center space-x-1 sm:space-x-1.5 px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-medium text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 transition-colors min-h-[36px]"
-              title="Business Intro Guide"
-            >
-              <HelpCircle className="w-3.5 h-3.5 text-slate-500 dark:text-slate-400" />
-              <span className="hidden sm:inline">Guide</span>
+              <RefreshCw className="w-3 h-3 text-slate-400" />
+              <span>Demo</span>
             </button>
           </div>
         </div>
