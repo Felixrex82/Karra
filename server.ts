@@ -147,10 +147,31 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
 }
 
 
+function getCleanApiKey(): string | null {
+  const candidateKeys = [
+    process.env.GEMINI_API_KEY,
+    process.env.VITE_GEMINI_API_KEY,
+    process.env.GOOGLE_API_KEY,
+    process.env.GOOGLE_GENAI_API_KEY,
+    process.env.GEMINI_KEY,
+    process.env.API_KEY,
+  ];
+
+  for (const raw of candidateKeys) {
+    if (typeof raw === 'string') {
+      const clean = raw.trim().replace(/^["']|["']$/g, '').trim();
+      if (clean && clean.length > 5 && !clean.includes('MY_GEMINI_API_KEY')) {
+        return clean;
+      }
+    }
+  }
+  return null;
+}
+
 // Lazy-initialized Gemini client
 let genAIClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = getCleanApiKey();
   if (!apiKey) {
     return null;
   }
@@ -169,9 +190,11 @@ function getGenAI(): GoogleGenAI | null {
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
+  const apiKey = getCleanApiKey();
   res.json({
     status: 'ok',
-    geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+    geminiConfigured: Boolean(apiKey),
+    apiKeyConfigured: Boolean(apiKey),
     timestamp: new Date().toISOString(),
   });
 });

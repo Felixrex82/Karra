@@ -24,26 +24,30 @@ export async function generateContentWithRetryAndFallback(
   };
 
   for (const model of candidateModels) {
-    try {
-      let timer: NodeJS.Timeout;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`Model ${model} timed out after 14000ms`)), 14000);
-      });
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        let timer: NodeJS.Timeout;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`Model ${model} timed out after 6000ms`)), 6000);
+        });
 
-      const generatePromise = ai.models.generateContent({
-        ...options,
-        model,
-        config: generationConfig,
-      });
+        const generatePromise = ai.models.generateContent({
+          ...options,
+          model,
+          config: generationConfig,
+        });
 
-      const response = await Promise.race([generatePromise, timeoutPromise]);
-      clearTimeout(timer!);
-      return response;
-    } catch (err: any) {
-      lastError = err;
-      const status = err?.status || err?.code || 'busy';
-      console.log(`[Gemini Fast-Route] Model ${model} status ${status}. Trying next candidate.`);
-      continue;
+        const response = await Promise.race([generatePromise, timeoutPromise]);
+        clearTimeout(timer!);
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        const status = err?.status || err?.code || 'busy';
+        console.log(`[Gemini Fast-Route] Model ${model} (attempt ${attempt}) status ${status}.`);
+        if (attempt === 1) {
+          await new Promise((r) => setTimeout(r, 600));
+        }
+      }
     }
   }
 

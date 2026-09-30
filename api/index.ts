@@ -4,7 +4,7 @@ import {
   generateContentWithRetryAndFallback,
   buildInterpretPrompt,
   buildAskSystemPrompt,
-} from './geminiEngine';
+} from './_geminiEngine';
 
 export const FOUNDER_EMAIL = 'olamidefelix54@gmail.com';
 export const FOUNDER_PASSWORD = '@Felixrex1';
@@ -242,18 +242,34 @@ function verifyAdminRequest(req: any): boolean {
   return isValidAdminSession(adminSecret, adminEmail);
 }
 
+function getCleanApiKey(): string | null {
+  const candidateKeys = [
+    process.env.GEMINI_API_KEY,
+    process.env.VITE_GEMINI_API_KEY,
+    process.env.GOOGLE_API_KEY,
+    process.env.GOOGLE_GENAI_API_KEY,
+    process.env.GEMINI_KEY,
+    process.env.API_KEY,
+  ];
+
+  for (const raw of candidateKeys) {
+    if (typeof raw === 'string') {
+      const clean = raw.trim().replace(/^["']|["']$/g, '').trim();
+      if (clean && clean.length > 5 && !clean.includes('MY_GEMINI_API_KEY')) {
+        return clean;
+      }
+    }
+  }
+  return null;
+}
+
 let genAIClient: GoogleGenAI | null = null;
 function getGenAI(): GoogleGenAI | null {
-  const apiKey =
-    process.env.GEMINI_API_KEY ||
-    process.env.VITE_GEMINI_API_KEY ||
-    process.env.GOOGLE_API_KEY ||
-    process.env.GOOGLE_GENAI_API_KEY;
-
-  if (!apiKey || !apiKey.trim()) return null;
+  const apiKey = getCleanApiKey();
+  if (!apiKey) return null;
   if (!genAIClient) {
     genAIClient = new GoogleGenAI({
-      apiKey: apiKey.trim(),
+      apiKey,
       httpOptions: {
         headers: { 'User-Agent': 'aistudio-build' },
       },
