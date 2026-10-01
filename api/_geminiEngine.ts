@@ -12,7 +12,7 @@ export async function generateContentWithRetryAndFallback(
   }
 ) {
   // Candidate models compliant with system skills guideline (fast, resilient models prioritized)
-  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+  const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest'];
   let lastError: any = null;
 
   // Enforce low temperature for deterministic reasoning and zero hallucination
@@ -144,7 +144,22 @@ CORE UNDERSTANDING DIRECTIVES:
    - "David bought...", "Customer bought...", "I sold...", "Ada took...", "Delivered 2 native outfits to Alhaji for 40k", "Supplied 5 cartons...", "Tailored 3 dresses...", "Did hair braids..." (Customer purchasing goods/services or merchant order fulfillment): ALWAYS "RECORD_SALE"!
    - CRITICAL: Extract the EXACT numeric quantity specified (e.g. "delivered 2 native outfits" -> quantity = 2; "supplied 5 cartons" -> quantity = 5). NEVER default to 1 when a number is present!
 
+8. CUSTOM PRODUCTION, BESPOKE CRAFT, & COST-PLUS SALES:
+   - When a merchant spends money on materials, parts, or production to make/produce an item and charges a client (e.g. "I spent #64000 to make a dress and charged the client #79000", "spent 20k to make cake and charged customer 35k", "spent 40k on parts to repair generator and billed client 70k"):
+     * ALWAYS classify as "RECORD_COMPOSITE_PRODUCTION_SALE" (or "RECORD_SALE")!
+     * explicitTotalAmount / explicitUnitPrice: The amount charged to the client (e.g. 79000)
+     * explicitUnitCost / productionCost: The amount spent to make/produce/supply the item (e.g. 64000)
+     * expenseAmount: The amount spent on production (e.g. 64000)
+     * expenseCategory: "Materials & Production"
+     * productReference: The clean item name ("Dress", "Cake", "Generator Repair", "Agbada")
+     * customerReference: The client name ("Client", "Customer", or named customer)
+     * headline: "Sale & Production Expense • Dress"
+     * interpretationSummary: "Recorded ₦64,000 production expense to make Dress and ₦79,000 sale to Client (Net Profit: ₦15,000)."
+     * Gross / Net profit is revenue minus cost: 79000 - 64000 = 15000!
+     * DO NOT set cost or expense to 0! Both the production expense and the client sale are recorded!
+
 POSSIBLE INTENTS:
+- "RECORD_COMPOSITE_PRODUCTION_SALE": Merchant spent money to make/produce an item AND charged/sold it to a client.
 - "RECORD_SALE": Sale of goods or services.
 - "RECORD_EXPENSE": Operating overhead (fuel, transport, generator, rent, repairs, salaries).
 - "RECORD_PURCHASE": Purchasing stock or inventory from supplier (e.g. bought 30 cartons from Musa at 12k each).
@@ -178,6 +193,8 @@ Return structured JSON with this exact schema (use null for any unstated or unkn
     "unit": null,
     "explicitUnitPrice": null,
     "explicitTotalAmount": null,
+    "explicitUnitCost": null,
+    "productionCost": null,
     "cashPaid": null,
     "outstandingDebt": null,
     "customerReference": null,

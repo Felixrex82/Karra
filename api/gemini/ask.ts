@@ -4,8 +4,13 @@ import {
   buildAskSystemPrompt,
 } from '../_geminiEngine';
 
-function getCleanApiKey(): string | null {
+function getCleanApiKey(req?: any): string | null {
+  const headerKey = req?.headers?.['x-gemini-api-key'] || req?.headers?.['x-api-key'];
+  const bodyKey = req?.body && typeof req.body === 'object' ? req.body.apiKey : null;
+
   const candidateKeys = [
+    headerKey,
+    bodyKey,
     process.env.GEMINI_API_KEY,
     process.env.VITE_GEMINI_API_KEY,
     process.env.GOOGLE_API_KEY,
@@ -25,19 +30,15 @@ function getCleanApiKey(): string | null {
   return null;
 }
 
-let genAIClient: GoogleGenAI | null = null;
-function getGenAI(): GoogleGenAI | null {
-  const apiKey = getCleanApiKey();
+function getGenAI(req?: any): GoogleGenAI | null {
+  const apiKey = getCleanApiKey(req);
   if (!apiKey) return null;
-  if (!genAIClient) {
-    genAIClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: { 'User-Agent': 'aistudio-build' },
-      },
-    });
-  }
-  return genAIClient;
+  return new GoogleGenAI({
+    apiKey,
+    httpOptions: {
+      headers: { 'User-Agent': 'aistudio-build' },
+    },
+  });
 }
 
 function sendJson(res: any, statusCode: number, data: any) {
@@ -109,7 +110,7 @@ export default async function handler(req: any, res: any) {
       return sendJson(res, 400, { error: 'question is required' });
     }
 
-    const ai = getGenAI();
+    const ai = getGenAI(req);
     if (!ai) {
       return sendJson(res, 200, {
         success: false,

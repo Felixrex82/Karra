@@ -389,6 +389,23 @@ async function runTests() {
   }
   console.log('✅ TEST 21 PASSED: Tailoring custom craft logged immediately with ₦75,000 revenue for 3 units.');
 
+  // Test 22: Composite custom craft production and client sale (dual transaction)
+  console.log('\n▶ TEST 22: "I spent #64000 to make a dress and charged the client #79000"');
+  state.pendingFollowUp = null;
+  const res22 = await processNaturalInput('I spent #64000 to make a dress and charged the client #79000', state);
+  if (!res22.createdEvents || res22.createdEvents.length !== 2) {
+    throw new Error(`TEST 22 FAILED: Expected 2 events (Expense + Sale), got ${res22.createdEvents?.length}`);
+  }
+  const expEv = res22.createdEvents.find((e) => e.type === 'EXPENSE');
+  const saleEv = res22.createdEvents.find((e) => e.type === 'SALE');
+  if (!expEv || expEv.expenseAmount !== 64000) {
+    throw new Error(`TEST 22 FAILED: Expected ₦64,000 expense, got ${JSON.stringify(expEv)}`);
+  }
+  if (!saleEv || saleEv.totalRevenue !== 79000) {
+    throw new Error(`TEST 22 FAILED: Expected ₦79,000 sale, got ${JSON.stringify(saleEv)}`);
+  }
+  console.log('✅ TEST 22 PASSED: Successfully recorded BOTH ₦64,000 production expense and ₦79,000 client sale (Net: ₦15,000).');
+
   console.log('\n🎉 ALL NLP & EXPENSE TESTS PASSED SUCCESSFULLY!');
 }
 

@@ -802,9 +802,133 @@ export function isCustomerBuyingStatement(text: string, customers: CustomerMemor
 }
 
 /**
+ * Checks if the statement describes custom production spending AND charging a client (e.g. "I spent #64000 to make a dress and charged the client #79000")
+ */
+export function isCompositeProductionSale(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+  const hasProductionSpend =
+    /(?:i\s+)?(?:spent|used|bought|paid)\s+[₦#]?[0-9.,]+[km]?\s+(?:to\s+(?:make|sew|produce|bake|build|repair|fix|design|craft)|on\s+(?:materials|fabrics?|parts|ingredients?\s+for|making|producing))/i.test(lower) ||
+    /(?:cost|spent)\s+(?:me\s+)?[₦#]?[0-9.,]+[km]?\s+(?:to\s+(?:make|sew|produce|bake|build|repair|fix))/i.test(lower);
+
+  const hasChargeOrSell = /\b(?:charged|billed|sold\s+(?:it\s+)?(?:to|for)|collected\s+from)\b/i.test(lower);
+  if (!hasProductionSpend || !hasChargeOrSell) return false;
+
+  const amountMatches = [...text.matchAll(/(?:[₦#]\s*[0-9.,]+[km]?|[0-9.,]+[km]\b|\b[0-9]{3,8}\b)/gi)];
+  return amountMatches.length >= 2;
+}
+
+/**
+ * Parses composite production-and-sale transactions:
+ * Merchant spent money to produce/make an item AND charged a client.
+ * Produces BOTH the Production Expense event and the Sale event.
+ */
+export function parseCompositeProductionSale(input: string, state: BusinessState): ParseResult | null {
+  if (!isCompositeProductionSale(input)) return null;
+
+  const amountMatches = [...input.matchAll(/(?:[₦#]\s*[0-9.,]+[km]?|[0-9.,]+[km]\b|\b[0-9]{3,8}\b)/gi)];
+  if (amountMatches.length < 2) return null;
+
+  const rawSpent = amountMatches[0][0];
+  const rawCharged = amountMatches[amountMatches.length - 1][0];
+
+  const spentAmt = parseNairaAmount(rawSpent);
+  const chargedAmt = parseNairaAmount(rawCharged);
+
+  if (!spentAmt || !chargedAmt || spentAmt <= 0 || chargedAmt <= 0) return null;
+
+  // Extract product & customer & quantity
+  let prodName = 'Dress';
+  let custName = 'Client';
+  let qty = 1;
+
+  const prodMatch =
+    input.match(/(?:to\s+(?:make|sew|produce|bake|build|repair|fix|design|craft)\s+(?:a\s+|an\s+|the\s+)?([0-9]+\s+)?([a-zA-Z\s]+?)(?:\s+and|\s*,|\s+for|\s+at|\s+charged|\s+billed|\s+sold|\s+collected))/i) ||
+    input.match(/(?:on\s+(?:materials|fabrics?|parts|ingredients?\s+for)\s+(?:a\s+|an\s+|the\s+)?([0-9]+\s+)?([a-zA-Z\s]+?)(?:\s+and|\s*,|\s+charged|\s+billed|\s+sold|\s+collected))/i);
+  if (prodMatch) {
+    if (prodMatch[1]) {
+      const q = parseInt(prodMatch[1].trim(), 10);
+      if (!isNaN(q) && q > 0) qty = q;
+    }
+    const rawProd = prodMatch[2].trim();
+    if (rawProd && rawProd.length > 1) {
+      prodName = rawProd.charAt(0).toUpperCase() + rawProd.slice(1);
+    }
+  }
+
+  const custMatch = input.match(/(?:charged|billed|sold\s+(?:it\s+)?to|collected\s+from)\s+(?:the\s+)?([a-zA-Z]+)/i);
+  if (custMatch) {
+    const rawCust = custMatch[1].trim();
+    if (rawCust && !['for', 'at', 'sum', 'a', 'the', 'my'].includes(rawCust.toLowerCase())) {
+      custName = rawCust.charAt(0).toUpperCase() + rawCust.slice(1);
+    }
+  }
+
+  const todayStr = getTodayDateStr();
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  const profit = chargedAmt - spentAmt;
+
+  const expenseEv: BusinessEvent = ensureEventHeadlineAndSummary({
+    id: `ev-exp-${Date.now()}-1`,
+    timestamp: new Date().toISOString(),
+    date: todayStr,
+    timeStr,
+    type: 'EXPENSE',
+    rawUserText: input,
+    systemResponseText: `Spent ${formatNaira(spentAmt)} to make ${prodName} (Materials & Production Expense).`,
+    expenseCategory: 'Procurement',
+    expenseAmount: spentAmt,
+    productName: prodName,
+    quantity: qty,
+    totalCostAtTime: spentAmt,
+    totalRevenue: 0,
+    cashReceived: 0,
+    headline: `Expense • Procurement`,
+    summary: `Spent ${formatNaira(spentAmt)} to make ${prodName}.`,
+  });
+
+  const saleEv: BusinessEvent = ensureEventHeadlineAndSummary({
+    id: `ev-sale-${Date.now()}-2`,
+    timestamp: new Date().toISOString(),
+    date: todayStr,
+    timeStr,
+    type: 'SALE',
+    rawUserText: input,
+    systemResponseText: `Charged ${custName} ${formatNaira(chargedAmt)} for ${qty} ${prodName}.`,
+    productName: prodName,
+    customerName: custName,
+    quantity: qty,
+    unit: 'piece',
+    unitSellingPrice: chargedAmt / qty,
+    totalRevenue: chargedAmt,
+    cashReceived: chargedAmt,
+    receivableAdded: 0,
+    unitCostAtTime: 0,
+    totalCostAtTime: 0,
+    costIsEstimate: false,
+    costEstimateBasis: 'exact',
+    grossProfit: chargedAmt,
+    headline: `Sale • ${qty} ${prodName}`,
+    summary: `Charged ${custName} ${formatNaira(chargedAmt)} for ${prodName}.`,
+  });
+
+  const summaryText = `Got it. Recorded 2 transactions: Spent ${formatNaira(spentAmt)} on ${prodName} production (Materials & Production Expense) and charged ${custName} ${formatNaira(chargedAmt)} (Sale). Net Profit: ${formatNaira(profit)}.`;
+
+  return {
+    isQuestion: false,
+    createdEvent: saleEv,
+    createdEvents: [expenseEv, saleEv],
+    plainResponseText: summaryText,
+  };
+}
+
+/**
  * Checks if the statement represents merchant expenditure/purchase (outflow), never a sale.
  */
 export function isMerchantSpendingStatement(text: string, customers: CustomerMemory[]): boolean {
+  if (isCompositeProductionSale(text)) {
+    return false;
+  }
   const lower = text.toLowerCase().trim();
   if (
     lower.startsWith('i bought') ||
@@ -1142,6 +1266,12 @@ export async function processNaturalInput(
     return learningResult;
   }
 
+  // 0c. Check for composite custom production sales ("I spent #64000 to make a dress and charged the client #79000"):
+  const immediateComposite = parseCompositeProductionSale(input, state);
+  if (immediateComposite) {
+    return immediateComposite;
+  }
+
   // 1. Check if this is answering a pending follow-up question
   if (state.pendingFollowUp) {
     const followUp = state.pendingFollowUp;
@@ -1425,6 +1555,7 @@ export async function processNaturalInput(
       const aiSupplierName = entities.supplierReference || data.data.supplierName;
       const aiExpenseAmount = entities.expenseAmount !== undefined && entities.expenseAmount !== null ? entities.expenseAmount : (aiTotalAmount || data.data.expenseAmount);
       const aiExpenseCategory = entities.expenseCategory || data.data.expenseCategory;
+      const aiUnitCost = entities.explicitUnitCost || entities.productionCost || data.data.explicitUnitCost || data.data.productionCost;
 
       // Handle detected ambiguity from conversation understanding layer
       if (data.data.isAmbiguous && data.data.ambiguityQuestion) {
@@ -1723,43 +1854,21 @@ export async function processNaturalInput(
           };
         }
 
+        const effectiveUnitCost = (aiUnitCost && aiUnitCost > 0)
+          ? Math.round(aiUnitCost / qty)
+          : (unitCost > 0 ? unitCost : 0);
+
+        const effectiveTotalCost = effectiveUnitCost * qty;
+        const effectiveGrossProfit = effectiveUnitCost > 0 ? (totalRev - effectiveTotalCost) : (isService ? totalRev : 0);
+
         const metrics = computeSaleMetrics({
           quantity: qty,
           totalRevenue: totalRev,
           cashReceived: cash,
-          unitCostAtTime: isService ? 0 : (unitCost > 0 ? unitCost : undefined),
-          costIsEstimate: isService ? false : costRes.isEstimate,
-          costEstimateBasis: isService ? 'service' : costRes.costBasis,
+          unitCostAtTime: effectiveUnitCost > 0 ? effectiveUnitCost : (isService ? 0 : (unitCost > 0 ? unitCost : undefined)),
+          costIsEstimate: effectiveUnitCost > 0 ? false : (isService ? false : costRes.isEstimate),
+          costEstimateBasis: effectiveUnitCost > 0 ? 'exact' : (isService ? 'service' : costRes.costBasis),
         });
-
-        const ev: BusinessEvent = {
-          id: `ev-${Date.now()}`,
-          timestamp: new Date().toISOString(),
-          date: todayStr,
-          timeStr,
-          type: 'SALE',
-          rawUserText: input,
-          systemResponseText: isService
-            ? `Got it. Recorded ${prod.name} service for ${formatNaira(totalRev)}.${cash < totalRev ? ` Paid: ${formatNaira(cash)}.${receivable > 0 ? ` ${custName ? custName : 'Customer'} still owes ${formatNaira(receivable)}.` : ''}` : ''}`
-            : `Got it. Sold ${qty} ${unit ? `${unit} ` : ''}${prod.name} for ${formatNaira(totalRev)}. Paid: ${formatNaira(cash)}.${receivable > 0 ? ` ${custName ? custName : 'Customer'} still owes ${formatNaira(receivable)}.` : ''}`,
-          productName: prod.name,
-          customerName: custName,
-          quantity: qty,
-          unit: unit || (isService ? 'service' : undefined),
-          unitSellingPrice: totalRev / qty,
-          totalRevenue: totalRev,
-          cashReceived: cash,
-          receivableAdded: receivable,
-          unitCostAtTime: isService ? 0 : metrics.unitCostAtTime,
-          totalCostAtTime: isService ? 0 : metrics.totalCostAtTime,
-          costIsEstimate: isService ? false : metrics.costIsEstimate,
-          costEstimateBasis: isService ? 'service' : metrics.costEstimateBasis,
-          grossProfit: isService ? totalRev : metrics.grossProfit,
-          headline: data.data.headline,
-          summary: data.data.summary,
-        };
-
-        const finalEv = ensureEventHeadlineAndSummary(ev);
 
         const memoryUpdates: MemoryUpdateItem[] = [];
         if (!state.products.some(p => p.name.toLowerCase() === prodDisplayName.toLowerCase())) {
@@ -1785,6 +1894,99 @@ export async function processNaturalInput(
             },
           });
         }
+
+        // Check if this is a composite production sale (merchant spent money on materials/production to make an item and charged client)
+        const isCompositeProdSale =
+          intent === 'RECORD_COMPOSITE_PRODUCTION_SALE' ||
+          (effectiveTotalCost > 0 && /\b(?:spent|used|cost|make|sew|produce|parts|materials|bake)\b/i.test(input));
+
+        if (isCompositeProdSale && effectiveTotalCost > 0) {
+          const expenseEv: BusinessEvent = ensureEventHeadlineAndSummary({
+            id: `ev-exp-${Date.now()}-1`,
+            timestamp: new Date().toISOString(),
+            date: todayStr,
+            timeStr,
+            type: 'EXPENSE',
+            rawUserText: input,
+            systemResponseText: `Spent ${formatNaira(effectiveTotalCost)} to make ${prod.name} (Materials & Production Expense).`,
+            expenseCategory: 'Procurement',
+            expenseAmount: effectiveTotalCost,
+            productName: prod.name,
+            quantity: qty,
+            totalCostAtTime: effectiveTotalCost,
+            totalRevenue: 0,
+            cashReceived: 0,
+            headline: `Expense • Procurement`,
+            summary: `Spent ${formatNaira(effectiveTotalCost)} to make ${prod.name}.`,
+          });
+
+          const saleEv: BusinessEvent = ensureEventHeadlineAndSummary({
+            id: `ev-sale-${Date.now()}-2`,
+            timestamp: new Date().toISOString(),
+            date: todayStr,
+            timeStr,
+            type: 'SALE',
+            rawUserText: input,
+            systemResponseText: `Charged ${custName || 'Client'} ${formatNaira(totalRev)} for ${qty} ${prod.name}.`,
+            productName: prod.name,
+            customerName: custName || 'Client',
+            quantity: qty,
+            unit: unit || 'piece',
+            unitSellingPrice: totalRev / qty,
+            totalRevenue: totalRev,
+            cashReceived: cash,
+            receivableAdded: receivable,
+            unitCostAtTime: 0,
+            totalCostAtTime: 0,
+            costIsEstimate: false,
+            costEstimateBasis: 'exact',
+            grossProfit: totalRev,
+            headline: data.data.headline || `Sale • ${qty} ${prod.name}`,
+            summary: data.data.summary || `Charged ${custName || 'Client'} ${formatNaira(totalRev)} for ${prod.name}.`,
+          });
+
+          const summaryText = `Got it. Recorded 2 transactions: Spent ${formatNaira(effectiveTotalCost)} on ${prod.name} production (Materials & Production Expense) and charged ${custName || 'Client'} ${formatNaira(totalRev)} (Sale). Net Profit: ${formatNaira(effectiveGrossProfit)}.`;
+
+          return {
+            isQuestion: false,
+            createdEvent: saleEv,
+            createdEvents: [expenseEv, saleEv],
+            memoryUpdates: memoryUpdates.length > 0 ? memoryUpdates : undefined,
+            memoryUpdate: memoryUpdates[0] ? (memoryUpdates[0] as any) : undefined,
+            plainResponseText: summaryText,
+          };
+        }
+
+        const ev: BusinessEvent = {
+          id: `ev-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          date: todayStr,
+          timeStr,
+          type: 'SALE',
+          rawUserText: input,
+          systemResponseText: effectiveUnitCost > 0
+            ? `Got it. Recorded sale of ${qty} ${prod.name} for ${formatNaira(totalRev)}. Production cost: ${formatNaira(effectiveTotalCost)}. Gross profit: ${formatNaira(effectiveGrossProfit)}.${cash < totalRev ? ` Paid: ${formatNaira(cash)}.${receivable > 0 ? ` ${custName ? custName : 'Customer'} still owes ${formatNaira(receivable)}.` : ''}` : ''}`
+            : isService
+            ? `Got it. Recorded ${prod.name} service for ${formatNaira(totalRev)}.${cash < totalRev ? ` Paid: ${formatNaira(cash)}.${receivable > 0 ? ` ${custName ? custName : 'Customer'} still owes ${formatNaira(receivable)}.` : ''}` : ''}`
+            : `Got it. Sold ${qty} ${unit ? `${unit} ` : ''}${prod.name} for ${formatNaira(totalRev)}. Paid: ${formatNaira(cash)}.${receivable > 0 ? ` ${custName ? custName : 'Customer'} still owes ${formatNaira(receivable)}.` : ''}`,
+          productName: prod.name,
+          customerName: custName,
+          quantity: qty,
+          unit: unit || (isService ? 'service' : undefined),
+          unitSellingPrice: totalRev / qty,
+          totalRevenue: totalRev,
+          cashReceived: cash,
+          receivableAdded: receivable,
+          unitCostAtTime: effectiveUnitCost > 0 ? effectiveUnitCost : (isService ? 0 : metrics.unitCostAtTime),
+          totalCostAtTime: effectiveUnitCost > 0 ? effectiveTotalCost : (isService ? 0 : metrics.totalCostAtTime),
+          costIsEstimate: effectiveUnitCost > 0 ? false : (isService ? false : metrics.costIsEstimate),
+          costEstimateBasis: effectiveUnitCost > 0 ? 'exact' : (isService ? 'service' : metrics.costEstimateBasis),
+          grossProfit: effectiveUnitCost > 0 ? effectiveGrossProfit : (isService ? totalRev : metrics.grossProfit),
+          headline: data.data.headline || `Sale • ${qty} ${prod.name}`,
+          summary: data.data.summary || (effectiveUnitCost > 0 ? `Sold for ${formatNaira(totalRev)}. Production cost: ${formatNaira(effectiveTotalCost)}. Gross profit: ${formatNaira(effectiveGrossProfit)}.` : undefined),
+        };
+
+        const finalEv = ensureEventHeadlineAndSummary(ev);
 
         return {
           isQuestion: false,
@@ -2326,6 +2528,12 @@ function parseDeterministicFallback(input: string, state: BusinessState): ParseR
         plainResponseText: promptText,
       };
     }
+  }
+
+  // 6.5. COMPOSITE PRODUCTION & CLIENT SALES (Merchant spent to make/produce and charged client):
+  const fallbackComposite = parseCompositeProductionSale(input, state);
+  if (fallbackComposite) {
+    return fallbackComposite;
   }
 
   // 7. MERCHANT PURCHASES & EXPENSES ("I bought so and so", "Bought fuel 5k", "I bought 30 cartons from Musa at 12k each")
@@ -3809,7 +4017,20 @@ export function answerBusinessQuestionWithMemory(
     };
   }
 
-  // 0a. CHECK FOR MERCHANT PURCHASES, OUTFLOWS & EXPENSES IN CHAT:
+  // 0a. CHECK FOR COMPOSITE PRODUCTION & CLIENT SALES IN CHAT:
+  // e.g. "I spent #64000 to make a dress and charged the client #79000"
+  const chatComposite = parseCompositeProductionSale(question, state);
+  if (chatComposite && (chatComposite.createdEvents || chatComposite.createdEvent)) {
+    return {
+      answer: chatComposite.plainResponseText,
+      createdEvent: chatComposite.createdEvent,
+      createdEvents: chatComposite.createdEvents,
+      memoryUpdates: chatComposite.memoryUpdates,
+      targetCalendarDate: chatComposite.targetCalendarDate,
+    };
+  }
+
+  // 0b. CHECK FOR MERCHANT PURCHASES, OUTFLOWS & EXPENSES IN CHAT:
   // e.g. "I bought so and so for 15k", "I bought fuel 5000", "Spent 10k on transport", "Paid shop rent"
   const isMerchantExpenseOrPurchase = isMerchantSpendingStatement(question, state.customers);
 
