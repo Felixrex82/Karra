@@ -77,36 +77,9 @@ function ensureDataStore(): BetaStoreData {
     // Filesystem may be restricted in serverless lambda; continue with in-memory store
   }
 
-  // Initial seed with 5 unique invitation codes for the initial testers
-  const initialInvitations: Record<string, BetaInvitation> = {};
-  const seedLabels = [
-    'Private Beta Tester 1 (Alaba Merchant)',
-    'Private Beta Tester 2 (Lekki Boutique)',
-    'Private Beta Tester 3 (Yaba Wholesale Provision)',
-    'Private Beta Tester 4 (Ikeja Electronics)',
-    'Private Beta Tester 5 (Surulere Supermarket)',
-  ];
-
-  const now = new Date().toISOString();
-  for (const label of seedLabels) {
-    const code = generateSecureInvitationCode();
-    initialInvitations[code] = {
-      id: crypto.randomUUID(),
-      code,
-      status: 'active',
-      maxUses: 1,
-      currentUses: 0,
-      createdAt: now,
-      expiresAt: null,
-      createdBy: FOUNDER_EMAIL,
-      notes: label,
-      usedBy: [],
-      redeemedAt: null,
-    };
-  }
-
+  // Store initialized cleanly with real data only (no fabricated or seed testers)
   cachedData = {
-    invitations: initialInvitations,
+    invitations: {},
     users: {},
     requests: [],
     feedback: [],
@@ -486,19 +459,46 @@ export function trackBetaEvent(data: {
   metadata?: Record<string, any>;
 }): void {
   const store = ensureDataStore();
+  const now = new Date().toISOString();
+
+  // Ensure user is recorded in store.users
+  if (data.userId) {
+    if (!store.users[data.userId]) {
+      const isFounder = (data.userEmail || '').toLowerCase() === FOUNDER_EMAIL.toLowerCase();
+      store.users[data.userId] = {
+        userId: data.userId,
+        email: data.userEmail || '',
+        businessName: data.businessName || 'Business Account',
+        betaStatus: 'active',
+        betaJoinedAt: now,
+        betaInvitationCode: 'DIRECT-AUTH',
+        role: isFounder ? 'admin' : 'merchant',
+        lastActiveAt: now,
+      };
+    } else {
+      store.users[data.userId].lastActiveAt = now;
+      if (data.businessName && data.businessName !== 'My Store' && data.businessName !== 'Business Account') {
+        store.users[data.userId].businessName = data.businessName;
+      }
+      if (data.userEmail) {
+        store.users[data.userId].email = data.userEmail;
+      }
+    }
+  }
+
   store.events.push({
     id: crypto.randomUUID(),
     userId: data.userId,
     userEmail: data.userEmail,
     businessName: data.businessName,
     eventName: data.eventName,
-    timestamp: new Date().toISOString(),
+    timestamp: now,
     metadata: data.metadata || {},
   });
 
-  // Limit event log size in memory/file
-  if (store.events.length > 2000) {
-    store.events = store.events.slice(-1000);
+  // Keep up to 5000 recent events
+  if (store.events.length > 5000) {
+    store.events = store.events.slice(-4000);
   }
   saveDataStore(store);
 }
@@ -516,11 +516,25 @@ export function listInvitations(): BetaInvitation[] {
 export function listUsers(): any[] {
   const store = ensureDataStore();
   return Object.values(store.users)
-    .map((u) => ({
-      ...u,
-      id: u.userId,
-      joinedAt: u.betaJoinedAt,
-    }))
+    .map((u) => {
+      // Calculate user specific activity count
+      const userEvents = store.events.filter((e) => e.userId === u.userId);
+      const txEvents = userEvents.filter((e) =>
+        ['sale_recorded', 'expense_recorded', 'stock_updated', 'transaction_created', 'debt_recorded'].includes(e.eventName)
+      );
+      const aiEvents = userEvents.filter((e) =>
+        ['ai_query', 'ai_interaction', 'ai_interpret', 'conversational_question'].includes(e.eventName)
+      );
+
+      return {
+        ...u,
+        id: u.userId,
+        joinedAt: u.betaJoinedAt,
+        totalEventsCount: userEvents.length,
+        transactionCount: txEvents.length,
+        aiQueryCount: aiEvents.length,
+      };
+    })
     .sort((a, b) =>
       new Date(b.lastActiveAt || b.betaJoinedAt).getTime() - new Date(a.lastActiveAt || a.betaJoinedAt).getTime()
     );
@@ -528,12 +542,46 @@ export function listUsers(): any[] {
 
 export function listFeedback(): BetaFeedbackItem[] {
   const store = ensureDataStore();
-  return store.feedback;
+  return store.feedback.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+export function updateFeedbackStatus(
+  feedbackId: string,
+  newStatus: 'open' | 'reviewed' | 'resolved'
+): boolean {
+  const store = ensureDataStore();
+  const fb = store.feedback.find((f) => f.id === feedbackId);
+  if (!fb) return false;
+  fb.status = newStatus;
+  saveDataStore(store);
+  return true;
 }
 
 export function listRequests(): BetaAccessRequest[] {
   const store = ensureDataStore();
-  return store.requests;
+  return store.requests.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
+export function updateRequestStatus(
+  requestId: string,
+  newStatus: 'pending' | 'approved' | 'rejected'
+): boolean {
+  const store = ensureDataStore();
+  const req = store.requests.find((r) => r.id === requestId);
+  if (!req) return false;
+  req.status = newStatus;
+  saveDataStore(store);
+  return true;
+}
+
+export function listEvents(limit = 200, userId?: string): BetaEventRecord[] {
+  const store = ensureDataStore();
+  let list = [...store.events];
+  if (userId) {
+    list = list.filter((e) => e.userId === userId);
+  }
+  list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  return list.slice(0, limit);
 }
 
 export function getBetaAnalytics() {

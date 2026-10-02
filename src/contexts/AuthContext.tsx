@@ -17,6 +17,7 @@ import {
   CloudLedgerResult,
 } from '../lib/firebase';
 import { UserProfile, BusinessState } from '../types';
+import { trackAppEvent } from '../utils/analyticsTracker';
 
 export type CloudSyncStatus = 'synced' | 'syncing' | 'error' | 'offline' | 'idle';
 
@@ -164,6 +165,11 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
     setUserProfile(profile);
     setIsAuthModalOpen(false);
+    trackAppEvent('user_login', {}, {
+      userId: loggedInUser.uid,
+      email: loggedInUser.email || email,
+      businessName: profile?.businessName || 'Business Account',
+    });
   }, []);
 
   const signUp = useCallback(async (
@@ -183,6 +189,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(registeredUser);
     setUserProfile(profile);
     setIsAuthModalOpen(false);
+
+    trackAppEvent('user_registered', { betaCode }, {
+      userId: registeredUser.uid,
+      email: registeredUser.email || email,
+      businessName: businessName || profile.businessName,
+    });
 
     // If betaCode was used, record redemption on server
     if (betaCode) {
@@ -208,6 +220,12 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     setUser(googleUser);
     setUserProfile(profile);
     setIsAuthModalOpen(false);
+
+    trackAppEvent('user_login', { method: 'google', betaCode }, {
+      userId: googleUser.uid,
+      email: googleUser.email || '',
+      businessName: profile.businessName || 'Business Account',
+    });
 
     if (betaCode) {
       try {

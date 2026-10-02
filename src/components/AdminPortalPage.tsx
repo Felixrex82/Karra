@@ -193,6 +193,21 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
     }
   };
 
+  if (isAdminAuthenticated) {
+    return (
+      <AdminDashboardView
+        onShowToast={onShowToast}
+        onUnauthorized={handleAdminSignOut}
+        onExitAdmin={onExitAdmin}
+        onNavigateTab={(tab) => {
+          if (tab === 'dashboard' || tab === 'profile') {
+            onExitAdmin();
+          }
+        }}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col font-sans selection:bg-purple-900 selection:text-white">
       {/* Top Admin Bar */}

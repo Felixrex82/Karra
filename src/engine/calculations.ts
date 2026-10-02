@@ -546,8 +546,12 @@ export function reconcileCustomerBalances(
     rec.lastDate = ev.date;
 
     if (ev.type === 'SALE') {
-      const rev = ev.totalRevenue || 0;
+      let rev = ev.totalRevenue || 0;
       const paid = ev.cashReceived !== undefined ? ev.cashReceived : rev;
+      const explicitDebt = ev.receivableAdded || 0;
+      if (explicitDebt > 0 && rev <= paid) {
+        rev = paid + explicitDebt;
+      }
       rec.totalPurchased += rev;
       rec.totalPaid += paid;
       rec.history.push({

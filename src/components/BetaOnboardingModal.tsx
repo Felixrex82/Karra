@@ -43,7 +43,7 @@ export const BetaOnboardingModal: React.FC<BetaOnboardingModalProps> = ({
             <span className="font-semibold text-emerald-800 dark:text-emerald-200">
               Zero complicated accounting jargon.
             </span>{' '}
-            No debits, credits, or balance sheets to memorize. Simply tell Karra what happened in your store using your natural words.
+            No debits, credits, or balance sheets to memorize. Simply record your sales and expenses using your natural words.
           </div>
         </div>
       ),

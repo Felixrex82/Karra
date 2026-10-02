@@ -492,6 +492,26 @@ export function executeBusinessAction(
         let unitSellingPrice = action.unitPrice || 0;
         let totalRevenue = action.totalAmount || 0;
 
+        const debtGiven =
+          action.outstandingBalance !== undefined
+            ? action.outstandingBalance
+            : (action as any).receivableAdded !== undefined
+            ? (action as any).receivableAdded
+            : (action as any).outstandingDebt !== undefined
+            ? (action as any).outstandingDebt
+            : null;
+
+        let cashReceived =
+          action.cashReceived !== undefined
+            ? action.cashReceived
+            : debtGiven !== null && totalRevenue > 0
+            ? Math.max(0, totalRevenue - debtGiven)
+            : totalRevenue;
+
+        if (cashReceived > 0 && debtGiven !== null && debtGiven > 0) {
+          totalRevenue = Math.max(totalRevenue, cashReceived + debtGiven);
+        }
+
         if (totalRevenue > 0 && unitSellingPrice === 0) {
           unitSellingPrice = Math.round(totalRevenue / qty);
         } else if (unitSellingPrice > 0 && totalRevenue === 0) {
@@ -501,8 +521,7 @@ export function executeBusinessAction(
           totalRevenue = unitSellingPrice * qty;
         }
 
-        const cashReceived = action.cashReceived !== undefined ? action.cashReceived : totalRevenue;
-        const receivableAdded = Math.max(0, totalRevenue - cashReceived);
+        const receivableAdded = debtGiven !== null ? debtGiven : Math.max(0, totalRevenue - cashReceived);
 
         let unitCostAtTime = 0;
         let totalCostAtTime = 0;
@@ -609,8 +628,21 @@ export function executeBusinessAction(
         };
 
         let confirmationMsg = `Recorded sale: ${qty} ${unit} of ${itemName} for ${formatNaira(totalRevenue)}.`;
+        const memoryUpdates: MemoryUpdateItem[] = [];
         if (receivableAdded > 0 && action.customerName) {
           confirmationMsg += ` ${action.customerName} paid ${formatNaira(cashReceived)} and owes ${formatNaira(receivableAdded)}.`;
+          memoryUpdates.push({
+            type: 'CUSTOMER_DEBT',
+            targetName: action.customerName.trim(),
+            summary: `${action.customerName.trim()} debt balance increased by ${formatNaira(receivableAdded)}`,
+            data: {
+              customerName: action.customerName.trim(),
+              balanceAdded: receivableAdded,
+              amount: receivableAdded,
+              date: eventDate,
+              note: `Debt from purchase of ${qty} ${unit} ${itemName}`,
+            },
+          });
         }
 
         return {
@@ -625,6 +657,7 @@ export function executeBusinessAction(
           },
           createdEvent: newEvent,
           auditRecord,
+          memoryUpdates,
           message: confirmationMsg,
         };
       }

@@ -1795,7 +1795,9 @@ export async function processNaturalInput(
         let cash = rawCash;
         let receivable = rawDebt;
 
-        if (totalRev > 0 && cash !== undefined && cash !== null && (receivable === undefined || receivable === null)) {
+        if (cash !== undefined && cash !== null && receivable !== undefined && receivable !== null && cash > 0 && receivable > 0) {
+          totalRev = Math.max(totalRev || 0, cash + receivable);
+        } else if (totalRev > 0 && cash !== undefined && cash !== null && (receivable === undefined || receivable === null)) {
           receivable = Math.max(0, totalRev - cash);
         } else if (totalRev > 0 && receivable !== undefined && receivable !== null && (cash === undefined || cash === null)) {
           cash = Math.max(0, totalRev - receivable);
@@ -2870,12 +2872,14 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
   }
 
   // 4. Extract Cash Paid vs Debt:
-  // A. Extract Debt Amount Mentioned (e.g. "remaining 15k as debts", "balance 15k", "owes 15k", "15k as debts", "will transfer 18k balance")
+  // A. Extract Debt Amount Mentioned (e.g. "owing me #12000", "remaining 15k as debts", "balance 15k", "owes 15k", "15k as debts", "will transfer 18k balance")
   let debtMentioned: number | null = null;
   const debtMatch =
-    input.match(/(?:remaining|balance|remains|owing|owes|left\s+with|debt\s+(?:of|is)?)\s*(?:of\s+)?(?:[₦#]?\s*([0-9.,]+[km]?))/i) ||
+    input.match(/(?:still\s+)?(?:owing|owes|is\s+owing)(?:\s+(?:me|us|shop|store))?\s*(?:of\s+)?(?:[₦#]?\s*([0-9.,]+[km]?))/i) ||
+    input.match(/(?:remaining|balance|remains|left\s+with|debt\s+(?:of|is)?)\s*(?:of\s+)?(?:[₦#]?\s*([0-9.,]+[km]?))/i) ||
     input.match(/([0-9.,]+[km]?)\s*(?:as\s+)?debts?\b/i) ||
-    input.match(/(?:will\s+transfer|will\s+pay|to\s+balance)\s*(?:[₦#]?\s*([0-9.,]+[km]?))/i);
+    input.match(/([0-9.,]+[km]?)\s*(?:remaining|balance|left)\b/i) ||
+    input.match(/(?:will\s+transfer|will\s+pay|to\s+balance|to\s+pay\s+later)\s*(?:[₦#]?\s*([0-9.,]+[km]?))/i);
   if (debtMatch) {
     const dVal = parseNairaAmount(debtMatch[1]);
     if (dVal !== null && dVal > 0) {
@@ -2883,11 +2887,11 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
     }
   }
 
-  // B. Extract Cash Paid / Received (e.g. "he paid 30k", "received 15k cash", "paid 20,000 cash", "collected 15k", "she gave 20k")
+  // B. Extract Cash Paid / Received (e.g. "he paid 30k", "paid #68000", "received 15k cash", "paid 20,000 cash", "collected 15k", "she gave 20k")
   let cashMentioned: number | null = null;
   const cashMatch =
-    input.match(/(?:he\s+paid|she\s+paid|they\s+paid|cash\s+paid|paid|received|collected|gives?|gave|brought|transferred|sent)\s*(?:[₦#]?\s*([0-9.,]+[km]?))/i) ||
-    input.match(/([0-9.,]+[km]?)\s*(?:cash|upfront|down\s*payment|now)\b/i);
+    input.match(/(?:he\s+paid|she\s+paid|they\s+paid|cash\s+paid|paid|received|collected|gives?|gave|brought|transferred|sent|deposited)\s*(?:[₦#]?\s*([0-9.,]+[km]?))/i) ||
+    input.match(/([0-9.,]+[km]?)\s*(?:cash|upfront|down\s*payment|now|deposit)\b/i);
   if (cashMatch) {
     const cVal = parseNairaAmount(cashMatch[1]);
     if (cVal !== null && cVal > 0) {
@@ -2907,11 +2911,9 @@ function parseSaleStatement(input: string, state: BusinessState): ParseResult {
   let receivableAdded = 0;
 
   if (cashMentioned !== null && debtMentioned !== null) {
-    // Both cash and debt are explicit (e.g. "sold 3 power banks to emeka, he paid 30k remaining 15k as debts")
-    if (totalRevenue <= 0 || totalRevenue === cashMentioned) {
-      totalRevenue = cashMentioned + debtMentioned;
-      unitPrice = totalRevenue / quantity;
-    }
+    // Both cash and debt are explicit (e.g. "Alhaji bought 2 shirts, paid #68000, owing me #12000")
+    totalRevenue = Math.max(totalRevenue, cashMentioned + debtMentioned);
+    unitPrice = totalRevenue / quantity;
     cashReceived = cashMentioned;
     receivableAdded = debtMentioned;
   } else if (debtMentioned !== null) {
@@ -4124,6 +4126,98 @@ export function answerBusinessQuestionWithMemory(
     notes: '',
     history: [],
   } : contextualCustomer);
+
+  // 0d. DEBTOR INQUIRIES & QUESTIONS ("Who owes me money?", "Who are those owing me?", "Who is owing?", "List debtors", "Total debt"):
+  const isDebtorInquiry =
+    (/\b(?:who|which\s+customers?|list|show|check|tell\s+me\s+who|how\s+many|anybody|anyone)\b/i.test(lower) &&
+      /\b(?:owes?|owing|debtors?|debts?|unpaid|balance)\b/i.test(lower)) ||
+    lower.includes('who owes') ||
+    lower.includes('who is owing') ||
+    lower.includes('who are those owing') ||
+    lower.includes('who is owing me') ||
+    lower.includes('who has not paid') ||
+    lower.includes('list of debtors') ||
+    lower.includes('debtors list') ||
+    lower.includes('customers owing') ||
+    lower.includes('total debt') ||
+    lower.includes('how much debt') ||
+    lower.includes('how much are customers owing');
+
+  if (isDebtorInquiry) {
+    const debtors = state.customers
+      .filter((c) => (c.outstandingBalance || 0) > 0)
+      .sort((a, b) => (b.outstandingBalance || 0) - (a.outstandingBalance || 0));
+
+    if (debtors.length === 0) {
+      return {
+        answer: 'Nobody is currently owing you money! All customer accounts are fully settled.',
+      };
+    }
+
+    const totalOwing = debtors.reduce((sum, d) => sum + (d.outstandingBalance || 0), 0);
+    const breakdown = debtors.map((d) => `${d.name} owes ${formatNaira(d.outstandingBalance || 0)}`).join(', ');
+
+    if (lower.includes('the most')) {
+      const top = debtors[0];
+      return {
+        answer: `${top.name} owes you the most at ${formatNaira(
+          top.outstandingBalance || 0
+        )}. In total, customers owe you ${formatNaira(totalOwing)} (${breakdown}).`,
+      };
+    }
+
+    return {
+      answer: `You have ${formatNaira(totalOwing)} in outstanding customer payments. Here is who owes you: ${breakdown}.`,
+    };
+  }
+
+  // 0e. SALES INQUIRIES & QUESTIONS ("How much did I sell today?", "What are my sales today?", "Sales today"):
+  const isTodaySalesInquiry =
+    (lower.includes('sell today') ||
+      lower.includes('sales today') ||
+      lower.includes('sold today') ||
+      lower.includes('made today in sales') ||
+      lower.includes('how much did i sell today') ||
+      lower.includes('what are my sales today') ||
+      lower.includes('how much have i sold') ||
+      lower.includes('total sales today')) &&
+    !lower.startsWith('i sold');
+
+  if (isTodaySalesInquiry) {
+    const todaySales = todayEvents.reduce((acc, e) => acc + (e.type === 'SALE' ? e.totalRevenue || 0 : 0), 0);
+    const todaySalesCount = todayEvents.filter((e) => e.type === 'SALE').length;
+    if (todaySales === 0) {
+      return {
+        answer: 'You have not recorded any sales for today yet.',
+      };
+    }
+    return {
+      answer: `Today you have recorded ${formatNaira(todaySales)} in sales across ${todaySalesCount} transaction${todaySalesCount !== 1 ? 's' : ''}.`,
+    };
+  }
+
+  const isYesterdaySalesInquiry =
+    lower.includes('sell yesterday') ||
+    lower.includes('sales yesterday') ||
+    lower.includes('sold yesterday') ||
+    lower.includes('how much did i sell yesterday');
+
+  if (isYesterdaySalesInquiry) {
+    const yDate = new Date();
+    yDate.setDate(yDate.getDate() - 1);
+    const yStr = yDate.toISOString().split('T')[0];
+    const yEvents = state.events.filter((e) => e.date === yStr && !e.isCorrected);
+    const ySales = yEvents.reduce((acc, e) => acc + (e.type === 'SALE' ? e.totalRevenue || 0 : 0), 0);
+    const ySalesCount = yEvents.filter((e) => e.type === 'SALE').length;
+    if (ySales === 0) {
+      return {
+        answer: 'You have no sales recorded for yesterday.',
+      };
+    }
+    return {
+      answer: `Yesterday you recorded ${formatNaira(ySales)} in sales across ${ySalesCount} transaction${ySalesCount !== 1 ? 's' : ''}.`,
+    };
+  }
 
   // 1. CHAT MEMORY: Customer Debt statement in chat
   // e.g. "Chuks owes me 80k", "He owes me 50k", "David is owing 30,000", "Chuks debt of 80k"

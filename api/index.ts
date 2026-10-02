@@ -46,75 +46,9 @@ interface BetaAccessRequest {
   status: 'pending' | 'approved' | 'rejected';
 }
 
-// In-memory data store for serverless execution
+// In-memory data store for serverless execution (real data only, no fabricated records)
 const inMemoryStore = {
-  invitations: {
-    'KARRA-ALAB-8821': {
-      id: 'inv_1',
-      code: 'KARRA-ALAB-8821',
-      status: 'active' as const,
-      maxUses: 1,
-      currentUses: 0,
-      createdAt: new Date().toISOString(),
-      expiresAt: null,
-      createdBy: FOUNDER_EMAIL,
-      notes: 'Private Beta Tester 1 (Alaba Electronics)',
-      usedBy: [],
-      redeemedAt: null,
-    },
-    'KARRA-LEKK-3914': {
-      id: 'inv_2',
-      code: 'KARRA-LEKK-3914',
-      status: 'active' as const,
-      maxUses: 1,
-      currentUses: 0,
-      createdAt: new Date().toISOString(),
-      expiresAt: null,
-      createdBy: FOUNDER_EMAIL,
-      notes: 'Private Beta Tester 2 (Lekki Boutique)',
-      usedBy: [],
-      redeemedAt: null,
-    },
-    'KARRA-YABA-7720': {
-      id: 'inv_3',
-      code: 'KARRA-YABA-7720',
-      status: 'active' as const,
-      maxUses: 1,
-      currentUses: 0,
-      createdAt: new Date().toISOString(),
-      expiresAt: null,
-      createdBy: FOUNDER_EMAIL,
-      notes: 'Private Beta Tester 3 (Yaba Wholesale Provision)',
-      usedBy: [],
-      redeemedAt: null,
-    },
-    'KARRA-IKEJ-5519': {
-      id: 'inv_4',
-      code: 'KARRA-IKEJ-5519',
-      status: 'active' as const,
-      maxUses: 1,
-      currentUses: 0,
-      createdAt: new Date().toISOString(),
-      expiresAt: null,
-      createdBy: FOUNDER_EMAIL,
-      notes: 'Private Beta Tester 4 (Ikeja Computer Village)',
-      usedBy: [],
-      redeemedAt: null,
-    },
-    'KARRA-SURL-9943': {
-      id: 'inv_5',
-      code: 'KARRA-SURL-9943',
-      status: 'active' as const,
-      maxUses: 1,
-      currentUses: 0,
-      createdAt: new Date().toISOString(),
-      expiresAt: null,
-      createdBy: FOUNDER_EMAIL,
-      notes: 'Private Beta Tester 5 (Surulere Supermarket)',
-      usedBy: [],
-      redeemedAt: null,
-    },
-  } as Record<string, BetaInvitation>,
+  invitations: {} as Record<string, BetaInvitation>,
   users: {} as Record<string, any>,
   requests: [] as BetaAccessRequest[],
   feedback: [] as BetaFeedbackItem[],
@@ -526,7 +460,25 @@ export default async function handler(req: any, res: any) {
         return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
       }
       if (method === 'GET') {
-        return sendJson(res, 200, { users: Object.values(inMemoryStore.users) });
+        const usersList = Object.values(inMemoryStore.users).map((u: any) => {
+          const uEvents = inMemoryStore.events.filter((e: any) => e.userId === u.userId);
+          const txCount = uEvents.filter((e: any) =>
+            ['sale_recorded', 'expense_recorded', 'stock_updated', 'transaction_created', 'debt_recorded'].includes(e.eventName)
+          ).length;
+          const aiCount = uEvents.filter((e: any) =>
+            ['ai_query', 'ai_interaction', 'ai_interpret', 'conversational_question'].includes(e.eventName)
+          ).length;
+          return {
+            ...u,
+            id: u.userId,
+            totalEventsCount: uEvents.length,
+            transactionCount: txCount,
+            aiQueryCount: aiCount,
+          };
+        }).sort((a: any, b: any) =>
+          new Date(b.lastActiveAt || b.joinedAt || 0).getTime() - new Date(a.lastActiveAt || a.joinedAt || 0).getTime()
+        );
+        return sendJson(res, 200, { users: usersList });
       }
       if (method === 'POST') {
         const { userId, status } = req.body;
@@ -545,12 +497,51 @@ export default async function handler(req: any, res: any) {
       return sendJson(res, 200, { feedback: inMemoryStore.feedback });
     }
 
+    if (targetPath === 'admin/feedback/status') {
+      if (!verifyAdminRequest(req)) {
+        return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
+      }
+      const { feedbackId, status } = req.body || {};
+      const fb = inMemoryStore.feedback.find((f) => f.id === feedbackId);
+      if (fb && status) {
+        fb.status = status;
+      }
+      return sendJson(res, 200, { success: Boolean(fb) });
+    }
+
     // 7. Admin Requests
     if (targetPath === 'admin/access-requests' || targetPath === 'admin/requests') {
       if (!verifyAdminRequest(req)) {
         return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
       }
       return sendJson(res, 200, { requests: inMemoryStore.requests });
+    }
+
+    if (targetPath === 'admin/access-requests/status') {
+      if (!verifyAdminRequest(req)) {
+        return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
+      }
+      const { requestId, status } = req.body || {};
+      const r = inMemoryStore.requests.find((reqItem) => reqItem.id === requestId);
+      if (r && status) {
+        r.status = status;
+      }
+      return sendJson(res, 200, { success: Boolean(r) });
+    }
+
+    // 7b. Admin Events
+    if (targetPath === 'admin/events') {
+      if (!verifyAdminRequest(req)) {
+        return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
+      }
+      const limit = Number(req.query?.limit) || 300;
+      const userId = (req.query?.userId as string) || undefined;
+      let eventsList = [...inMemoryStore.events];
+      if (userId) {
+        eventsList = eventsList.filter((e) => e.userId === userId);
+      }
+      eventsList.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+      return sendJson(res, 200, { events: eventsList.slice(0, limit) });
     }
 
     // 8. Admin Analytics
@@ -668,7 +659,46 @@ export default async function handler(req: any, res: any) {
 
     // 14. Beta: Track Event
     if (targetPath === 'beta/track-event') {
-      inMemoryStore.events.push(req.body);
+      const payload = req.body || {};
+      const { userId, userEmail, businessName, eventName, metadata } = payload;
+      const now = new Date().toISOString();
+
+      if (userId) {
+        if (!inMemoryStore.users[userId]) {
+          const isFounder = (userEmail || '').toLowerCase() === FOUNDER_EMAIL.toLowerCase();
+          inMemoryStore.users[userId] = {
+            userId,
+            email: userEmail || '',
+            businessName: businessName || 'Business Account',
+            betaStatus: 'active',
+            joinedAt: now,
+            role: isFounder ? 'admin' : 'merchant',
+            lastActiveAt: now,
+          };
+        } else {
+          inMemoryStore.users[userId].lastActiveAt = now;
+          if (businessName && businessName !== 'My Store' && businessName !== 'Business Account') {
+            inMemoryStore.users[userId].businessName = businessName;
+          }
+          if (userEmail) {
+            inMemoryStore.users[userId].email = userEmail;
+          }
+        }
+      }
+
+      inMemoryStore.events.push({
+        id: 'evt_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        userId: userId || 'anonymous',
+        userEmail: userEmail || '',
+        businessName: businessName || '',
+        eventName: eventName || 'activity',
+        timestamp: now,
+        metadata: metadata || {},
+      });
+
+      if (inMemoryStore.events.length > 5000) {
+        inMemoryStore.events = inMemoryStore.events.slice(-4000);
+      }
       return sendJson(res, 200, { success: true });
     }
 
@@ -770,6 +800,7 @@ export default async function handler(req: any, res: any) {
         let structuredAction: any = null;
         let calendarDate: string | null = null;
         let calendarAction: string | null = null;
+        let requiresClarification = false;
 
         try {
           const parsed = JSON.parse(response.text || '{}');
@@ -782,6 +813,7 @@ export default async function handler(req: any, res: any) {
           structuredAction = parsed.structuredAction || null;
           calendarDate = parsed.calendarDate || null;
           calendarAction = parsed.calendarAction || null;
+          requiresClarification = Boolean(parsed.requiresClarification);
         } catch {
           answerText = response.text || 'I have noted that down for your business.';
         }
@@ -799,6 +831,7 @@ export default async function handler(req: any, res: any) {
             structuredAction,
             calendarDate,
             calendarAction,
+            requiresClarification,
           },
           memories: extractedMemories,
           recordedEvent,
@@ -808,6 +841,7 @@ export default async function handler(req: any, res: any) {
           structuredAction,
           calendarDate,
           calendarAction,
+          requiresClarification,
         });
       } catch (err: any) {
         console.error('[Gemini Ask Error]:', err?.message || err);

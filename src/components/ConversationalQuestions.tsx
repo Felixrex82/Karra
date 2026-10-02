@@ -10,6 +10,7 @@ import {
   BrainCircuit,
   BookmarkCheck,
   CheckCircle2,
+  CheckCheck,
   ChevronRight,
   ChevronDown,
   User,
@@ -20,7 +21,10 @@ import {
   X,
   Mic,
   Calendar,
+  Plus,
+  MoreVertical,
 } from 'lucide-react';
+import { KarraLogo } from './KarraLogo';
 import { BusinessState, ChatMessage, MemoryUpdateItem, BusinessEvent } from '../types';
 import {
   answerBusinessQuestionWithMemory,
@@ -70,8 +74,8 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
           {
             id: 'm-initial',
             sender: 'assistant',
-            text: "Hello! Ask any question about your store, sales, or customer debts, or tell me about a payment or rule.",
-            timestamp: 'Just now',
+            text: "I'm here to help! Ask any question about your business, or record your sales, expenses, and customer debts using plain everyday language.",
+            timestamp: '12:00 PM',
           },
         ];
 
@@ -80,6 +84,8 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
   const [isLoading, setIsLoading] = useState(false);
   const [showMemoriesVault, setShowMemoriesVault] = useState(false);
   const [showScrollBottomBtn, setShowScrollBottomBtn] = useState(false);
+  const [showMenuDropdown, setShowMenuDropdown] = useState(false);
+  const [showQuickPrompts, setShowQuickPrompts] = useState(false);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
 
@@ -197,7 +203,7 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         { label: `${name} promised to pay Friday`, q: `${name} promised to pay on Friday` },
         { label: `What's ${name}'s phone number?`, q: `What is ${name}'s phone number?` },
         { label: `What did ${name} buy?`, q: `What did ${name} buy?` },
-        { label: `Tell me about ${name}`, q: `Tell me everything you remember about ${name}` },
+        { label: `View notes on ${name}`, q: `What do you remember about ${name}?` },
       ];
     }
 
@@ -255,13 +261,33 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
     setIsLoading(true);
 
     try {
-      // Calculate live numbers for rich context grounding
+      // Calculate live numbers and pre-computed ground truths for zero-hallucination AI
       const todayStr = getTodayDateStr();
       const todayEvents = state.events.filter((e) => e.date === todayStr && !e.isCorrected);
       const todaySales = todayEvents.reduce((acc, e) => acc + (e.type === 'SALE' ? e.totalRevenue || 0 : 0), 0);
       const todayGross = todayEvents.reduce((acc, e) => acc + (e.type === 'SALE' ? e.grossProfit || 0 : 0), 0);
       const todayExpenses = todayEvents.reduce((acc, e) => acc + (e.type === 'EXPENSE' ? e.expenseAmount || 0 : 0), 0);
-      const totalOwing = state.customers.reduce((acc, c) => acc + (c.outstandingBalance || 0), 0);
+      const todayNet = todayGross - todayExpenses;
+
+      // Yesterday's metrics
+      const yDate = new Date();
+      yDate.setDate(yDate.getDate() - 1);
+      const yesterdayStr = yDate.toISOString().split('T')[0];
+      const yesterdayEvents = state.events.filter((e) => e.date === yesterdayStr && !e.isCorrected);
+      const yesterdaySales = yesterdayEvents.reduce((acc, e) => acc + (e.type === 'SALE' ? e.totalRevenue || 0 : 0), 0);
+      const yesterdayGross = yesterdayEvents.reduce((acc, e) => acc + (e.type === 'SALE' ? e.grossProfit || 0 : 0), 0);
+      const yesterdayExpenses = yesterdayEvents.reduce((acc, e) => acc + (e.type === 'EXPENSE' ? e.expenseAmount || 0 : 0), 0);
+      const yesterdayNet = yesterdayGross - yesterdayExpenses;
+
+      // Debtor metrics
+      const debtors = state.customers.filter((c) => (c.outstandingBalance || 0) > 0);
+      const totalOwing = debtors.reduce((acc, c) => acc + (c.outstandingBalance || 0), 0);
+
+      // Lifetime metrics
+      const allActiveEvents = state.events.filter((e) => !e.isCorrected);
+      const totalLifetimeSales = allActiveEvents.reduce((acc, e) => acc + (e.type === 'SALE' ? e.totalRevenue || 0 : 0), 0);
+      const totalLifetimeExpenses = allActiveEvents.reduce((acc, e) => acc + (e.type === 'EXPENSE' ? e.expenseAmount || 0 : 0), 0);
+      const totalLifetimeGross = allActiveEvents.reduce((acc, e) => acc + (e.type === 'SALE' ? e.grossProfit || 0 : 0), 0);
 
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 20000);
@@ -277,13 +303,23 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
             text: m.text,
           })),
           businessSummary: {
+            todayDate: todayStr,
             todaySales,
             todayGrossProfit: todayGross,
             todayExpenses,
-            todayNet: todayGross - todayExpenses,
+            todayNet,
+            yesterdayDate: yesterdayStr,
+            yesterdaySales,
+            yesterdayGrossProfit: yesterdayGross,
+            yesterdayExpenses,
+            yesterdayNet,
             totalCustomerDebt: totalOwing,
+            debtorsList: debtors.map((d) => ({ name: d.name, amountOwed: d.outstandingBalance })),
             totalActiveProducts: state.products.length,
             totalCustomers: state.customers.length,
+            totalLifetimeSales,
+            totalLifetimeExpenses,
+            totalLifetimeProfit: totalLifetimeGross - totalLifetimeExpenses,
           },
           products: state.products.map((p) => ({
             name: p.name,
@@ -312,7 +348,7 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
             category: r.category,
           })),
           unitRelationships: state.unitRelationships,
-          recentEvents: state.events.slice(0, 10).map((e) => ({
+          recentEvents: state.events.slice(0, 20).map((e) => ({
             date: e.date,
             timeStr: e.timeStr,
             type: e.type,
@@ -321,6 +357,7 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
             totalRevenue: e.totalRevenue,
             cashReceived: e.cashReceived,
             expenseAmount: e.expenseAmount,
+            grossProfit: e.grossProfit,
             rawUserText: e.rawUserText,
           })),
         }),
@@ -549,30 +586,10 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
               }
             }
           } else {
-            const isQuestion =
-              lowerQ.startsWith('why') ||
-              lowerQ.startsWith('what') ||
-              lowerQ.startsWith('how') ||
-              lowerQ.startsWith('did') ||
-              lowerQ.startsWith('who') ||
-              lowerQ.startsWith('is ') ||
-              lowerQ.startsWith('are ') ||
-              lowerQ.includes('profit today') ||
-              lowerQ.includes('how much') ||
-              lowerQ.includes('?');
-
-            // Do not record hallucinated events on simple questions
-            if (!isQuestion) {
-              recordedEvents = json.data?.recordedEvents || json.recordedEvents || undefined;
-              recordedEvent =
-                json.data?.recordedEvent ||
-                json.recordedEvent ||
-                (recordedEvents && recordedEvents[0]) ||
-                undefined;
-              correctedEvent = json.data?.correctedEvent || json.correctedEvent || undefined;
-              calendarDate = json.data?.calendarDate || json.calendarDate || undefined;
-              calendarAction = json.data?.calendarAction || json.calendarAction || undefined;
-            }
+            // Informational query, greeting, or guidance: Never record an event
+            recordedEvent = undefined;
+            recordedEvents = undefined;
+            correctedEvent = undefined;
           }
         }
       } else {
@@ -693,278 +710,279 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
   const totalRules = (state.businessRules || state.rules || []).length;
 
   return (
-    <div className="flex-1 flex flex-col h-full min-h-0 bg-white dark:bg-[#111726] rounded-none sm:rounded-2xl border-0 sm:border border-slate-200/90 dark:border-slate-800 shadow-none sm:shadow-sm overflow-hidden transition-colors relative">
-      {/* Header with Context & Flow status */}
-      <div className="shrink-0 px-3 sm:px-4 py-2 sm:py-3 border-b border-slate-100 dark:border-slate-800/80 bg-white dark:bg-[#111726]">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center space-x-2 sm:space-x-2.5 min-w-0">
-            {onNavigateTab && (
-              <button
-                type="button"
-                onClick={() => onNavigateTab('dashboard')}
-                className="flex items-center space-x-1 px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors mr-0.5 cursor-pointer shrink-0"
-                title="Back to Dashboard"
-              >
-                <ArrowLeft className="w-3.5 h-3.5" />
-                <span className="hidden xs:inline">Back</span>
-              </button>
-            )}
-            <div className="w-8 h-8 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 flex items-center justify-center shrink-0">
-              <BrainCircuit className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center space-x-1.5">
-                <h3 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white truncate">
-                  Ask AI
-                </h3>
-                <span className="px-1.5 py-0.5 rounded-full text-[9px] sm:text-[10px] font-bold bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700/60 shrink-0">
-                  Active
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-1.5 shrink-0">
-            {sessionMemories.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setShowMemoriesVault(!showMemoriesVault)}
-                className="flex items-center space-x-1 px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-semibold text-emerald-700 dark:text-emerald-300 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 border border-emerald-200 dark:border-emerald-800/80 transition-colors min-h-[34px] cursor-pointer"
-                title="View all memories learned in this chat"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                <span className="hidden sm:inline">Learned</span>
-                <span>({sessionMemories.length})</span>
-                {showMemoriesVault ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-              </button>
-            )}
-
+    <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-50 dark:bg-[#061026] text-slate-900 dark:text-slate-100 overflow-hidden relative font-sans">
+      {/* 1. TOP HEADER (Matching Reference Screenshot) */}
+      <div className="shrink-0 px-3.5 sm:px-5 py-3 border-b border-slate-200 dark:border-[#0d2238] bg-white/95 dark:bg-[#061026]/95 backdrop-blur-md flex items-center justify-between z-20">
+        <div className="flex items-center space-x-3 min-w-0">
+          {onNavigateTab && (
             <button
               type="button"
-              onClick={handleClearThread}
-              className="flex items-center space-x-1 px-2 sm:px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white transition-colors min-h-[34px] cursor-pointer"
-              title="Start fresh conversation thread while keeping saved memories"
+              onClick={() => onNavigateTab('dashboard')}
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-slate-100 dark:bg-[#112437] hover:bg-slate-200 dark:hover:bg-[#18314a] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#162e49] flex items-center justify-center shrink-0 cursor-pointer shadow-xs transition-colors"
+              title="Back to Dashboard"
             >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Reset</span>
+              <ArrowLeft className="w-4 h-4" />
             </button>
+          )}
+
+          <div className="shrink-0">
+            <KarraLogo size="sm" variant="green-bg" />
+          </div>
+
+          <div className="min-w-0">
+            <h1 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight leading-snug">
+              Ask Karra
+            </h1>
+            <p className="text-xs text-slate-500 dark:text-slate-400 font-normal leading-none mt-0.5">
+              Your business assistant
+            </p>
           </div>
         </div>
 
-        {/* Expandable Session Memory Vault */}
-        {showMemoriesVault && sessionMemories.length > 0 && (
-          <div className="mt-3 p-3 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/80 space-y-2 animate-in fade-in max-h-48 overflow-y-auto">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Database className="w-4 h-4 text-emerald-700 dark:text-emerald-400" />
-                <span className="text-xs font-bold text-emerald-900 dark:text-emerald-200">
-                  Memories Learned from Current Chat:
-                </span>
-              </div>
+        <div className="flex items-center space-x-2 shrink-0 relative">
+          <div className="bg-emerald-50 dark:bg-[#04241d] border border-emerald-200 dark:border-[#093e32] text-emerald-700 dark:text-emerald-400 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-xs">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
+            <span>Active</span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowMenuDropdown(!showMenuDropdown)}
+            className="w-9 h-9 rounded-full bg-slate-100 dark:bg-transparent hover:bg-slate-200 dark:hover:bg-[#112437] border border-slate-200 dark:border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+            title="Options"
+          >
+            <MoreVertical className="w-5 h-5" />
+          </button>
+
+          {/* Options Dropdown Menu */}
+          {showMenuDropdown && (
+            <div className="absolute right-0 top-full mt-2 w-52 bg-white dark:bg-[#0b1b2d] border border-slate-200 dark:border-[#142c46] rounded-2xl p-2 shadow-2xl z-50 space-y-1 animate-in fade-in">
               <button
                 type="button"
-                onClick={() => setShowMemoriesVault(false)}
-                className="text-emerald-600 dark:text-emerald-400 hover:text-emerald-900 dark:hover:text-white p-1"
+                onClick={() => {
+                  setShowMenuDropdown(false);
+                  handleClearThread();
+                }}
+                className="w-full text-left px-3 py-2 rounded-xl text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#12283e] flex items-center space-x-2 cursor-pointer transition-colors"
               >
-                <X className="w-4 h-4" />
+                <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                <span>Reset Conversation</span>
               </button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-              {sessionMemories.map((mem, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-start space-x-2 p-2 rounded-lg bg-white dark:bg-[#161f32] border border-emerald-200/80 dark:border-slate-700/80 text-xs shadow-2xs"
+
+              {sessionMemories.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMenuDropdown(false);
+                    setShowMemoriesVault(true);
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-xl text-xs text-emerald-600 dark:text-emerald-400 hover:bg-slate-100 dark:hover:bg-[#12283e] flex items-center space-x-2 cursor-pointer transition-colors"
                 >
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <span className="font-semibold text-slate-900 dark:text-white block truncate">
-                      {mem.summary}
-                    </span>
-                    <span className="text-[10px] text-slate-400 dark:text-slate-400 uppercase tracking-wider">
-                      {mem.type.replace(/_/g, ' ')}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>Saved Memories ({sessionMemories.length})</span>
+                </button>
+              )}
+
+              {onNavigateTab && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMenuDropdown(false);
+                    onNavigateTab('memory');
+                  }}
+                  className="w-full text-left px-3 py-2 rounded-xl text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#12283e] flex items-center space-x-2 cursor-pointer transition-colors"
+                >
+                  <Database className="w-3.5 h-3.5 text-slate-400" />
+                  <span>View Memory Bank</span>
+                </button>
+              )}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      {/* Active Conversational Focus & Follow-up Prompt Pills Strip */}
-      <div className="shrink-0 px-2.5 sm:px-4 py-1.5 sm:py-2 bg-slate-50/70 dark:bg-[#0f1422] border-b border-slate-100 dark:border-slate-800/80 space-y-1">
-        {activeEntity && (
-          <div className="flex items-center justify-between px-2.5 py-1 rounded-lg bg-white dark:bg-[#161f32] border border-slate-200/80 dark:border-slate-700/80 text-xs">
-            <div className="flex items-center space-x-2 min-w-0">
-              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-              <span className="font-semibold text-slate-900 dark:text-white truncate">
-                Focus: <span className="text-emerald-700 dark:text-emerald-400 font-bold">{activeEntity.name}</span>
-                <span className="text-slate-400 dark:text-slate-500 font-normal ml-1">({activeEntity.details})</span>
+      {/* Expandable Session Memory Vault Modal if opened from menu */}
+      {showMemoriesVault && sessionMemories.length > 0 && (
+        <div className="mx-3.5 sm:mx-4 mt-2 p-3 rounded-2xl bg-emerald-50 dark:bg-[#09222c] border border-emerald-200 dark:border-[#0e484a] space-y-2 animate-in fade-in max-h-48 overflow-y-auto shrink-0 shadow-md">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Database className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <span className="text-xs font-bold text-slate-900 dark:text-white">
+                Memories Saved from Current Chat:
               </span>
             </div>
             <button
               type="button"
-              onClick={() => handleAsk(`Tell me about ${activeEntity.name}`)}
-              className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400 hover:underline shrink-0 ml-2 cursor-pointer"
+              onClick={() => setShowMemoriesVault(false)}
+              className="text-slate-400 hover:text-slate-900 dark:hover:text-white p-1 cursor-pointer"
             >
-              Review →
+              <X className="w-4 h-4" />
             </button>
           </div>
-        )}
-
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none touch-pan-x overscroll-x-contain -mx-1 px-1">
-          {getContextualPills().map((pill, idx) => (
-            <button
-              key={idx}
-              type="button"
-              onClick={() => handleAsk(pill.q)}
-              className="text-xs font-medium px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-900 dark:hover:bg-emerald-600 hover:text-white transition-all whitespace-nowrap shrink-0 min-h-[30px] border border-slate-200/80 dark:border-slate-700/80 active:scale-95 cursor-pointer shadow-2xs"
-            >
-              {pill.label}
-            </button>
-          ))}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+            {sessionMemories.map((mem, idx) => (
+              <div
+                key={idx}
+                className="flex items-start space-x-2 p-2 rounded-xl bg-white dark:bg-[#061824] border border-emerald-100 dark:border-[#0e3b44] text-xs shadow-2xs"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <span className="font-semibold text-slate-900 dark:text-white block truncate">
+                    {mem.summary}
+                  </span>
+                  <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                    {mem.type.replace(/_/g, ' ')}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Scrollable Conversation Messages Thread (Flex-1) */}
+      {/* 2. SCROLLABLE CONVERSATION FEED */}
       <div
         ref={messagesContainerRef}
         onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto touch-scroll-y overscroll-y-contain touch-pan-y p-3 sm:p-4 md:p-5 space-y-3.5 bg-slate-50/50 dark:bg-[#0b0f19]/60 scrollbar-thin"
+        className="flex-1 min-h-0 overflow-y-auto px-3.5 sm:px-4 py-3 sm:py-4 space-y-4 scrollbar-thin bg-transparent"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`flex ${m.sender === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[88%] sm:max-w-[80%] p-3 sm:p-3.5 rounded-2xl text-xs sm:text-sm leading-relaxed shadow-2xs ${
-                m.sender === 'user'
-                  ? 'bg-slate-900 dark:bg-emerald-700 text-white rounded-br-xs'
-                  : 'bg-white dark:bg-[#161f32] text-slate-800 dark:text-slate-100 border border-slate-200/90 dark:border-slate-700/80 rounded-bl-xs'
-              }`}
-            >
-              <p className="whitespace-pre-wrap">{m.text}</p>
+        {messages.map((m) => {
+          const isUser = m.sender === 'user';
+          if (isUser) {
+            return (
+              <div key={m.id} className="flex justify-end animate-in fade-in duration-200">
+                <div className="max-w-[85%] sm:max-w-[75%] bg-[#065b43] text-white rounded-2xl rounded-tr-xs p-3.5 text-xs sm:text-sm font-medium shadow-xs leading-relaxed">
+                  <p className="whitespace-pre-wrap">{m.text}</p>
+                  <div className="flex items-center justify-end space-x-1 text-[10px] text-emerald-200/90 mt-1">
+                    <span>{m.timestamp}</span>
+                    <CheckCheck className="w-3.5 h-3.5 text-emerald-300 ml-1 inline-block" />
+                  </div>
+                </div>
+              </div>
+            );
+          }
 
-              {/* Memory Saved Badge: Confirms memory captured from chat */}
-              {m.memorySaved && m.memorySaved.length > 0 && (
-                <div className="mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-700/60 space-y-1.5">
-                  {m.memorySaved.map((rawMem, idx) => {
-                    const mem = ensureMemoryHeadlineAndSummary(rawMem);
-                    return (
-                      <div
-                        key={idx}
-                        className="p-2.5 rounded-xl bg-emerald-50/90 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 text-emerald-950 dark:text-emerald-200 text-xs space-y-1 animate-in fade-in"
-                      >
-                        <div className="flex items-center justify-between gap-1.5">
-                          <div className="flex items-center space-x-1.5 min-w-0">
-                            <Sparkles className="w-3.5 h-3.5 text-emerald-700 dark:text-emerald-400 shrink-0" />
-                            <span className="font-bold text-[11px] text-emerald-900 dark:text-emerald-200 truncate">
-                              {mem.headline || mem.summary}
-                            </span>
+          return (
+            <div
+              key={m.id}
+              className="flex items-start space-x-2.5 max-w-[92%] sm:max-w-[85%] animate-in fade-in duration-200"
+            >
+              <div className="w-8 h-8 rounded-xl bg-[#084b3e] text-emerald-300 flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+                <KarraLogo size="sm" variant="green-bg" />
+              </div>
+              <div className="flex-1 bg-white dark:bg-[#0d2238] border border-slate-200 dark:border-[#16314d] text-slate-800 dark:text-slate-100 rounded-2xl rounded-tl-xs p-3.5 sm:p-4 text-xs sm:text-sm leading-relaxed shadow-xs">
+                <p className="whitespace-pre-wrap">{m.text}</p>
+
+                {/* If memory was saved */}
+                {m.memorySaved && m.memorySaved.length > 0 && (
+                  <div className="mt-2.5 pt-2.5 border-t border-slate-100 dark:border-[#16314d] space-y-1.5">
+                    {m.memorySaved.map((rawMem, idx) => {
+                      const mem = ensureMemoryHeadlineAndSummary(rawMem);
+                      return (
+                        <div
+                          key={idx}
+                          className="p-2.5 rounded-xl bg-emerald-50 dark:bg-[#082a2b] border border-emerald-200 dark:border-[#0d4f4e] text-emerald-800 dark:text-emerald-200 text-xs space-y-1"
+                        >
+                          <div className="flex items-center justify-between gap-1.5">
+                            <div className="flex items-center space-x-1.5 min-w-0">
+                              <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                              <span className="font-bold text-[11px] truncate">
+                                {mem.headline || mem.summary}
+                              </span>
+                            </div>
+                            {onNavigateTab && (
+                              <button
+                                type="button"
+                                onClick={() => onNavigateTab('memory')}
+                                className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 underline shrink-0 whitespace-nowrap cursor-pointer"
+                              >
+                                View Memory →
+                              </button>
+                            )}
                           </div>
-                          {onNavigateTab && (
-                            <button
-                              type="button"
-                              onClick={() => onNavigateTab('memory')}
-                              className="flex items-center space-x-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 hover:text-emerald-900 dark:hover:text-emerald-300 underline shrink-0 whitespace-nowrap cursor-pointer"
-                            >
-                              <span>Memory</span>
-                              <ArrowRight className="w-3 h-3" />
-                            </button>
-                          )}
                         </div>
-                        {mem.summary && mem.headline && (
-                          <p className="text-[11px] text-emerald-800/90 dark:text-emerald-300/90 leading-relaxed font-normal">
-                            {mem.summary}
-                          </p>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Event Logged / Corrected Executive Summary Card */}
+                {(m.recordedEvent || m.correctedEvent) && (() => {
+                  const ev = ensureEventHeadlineAndSummary(m.recordedEvent || m.correctedEvent!);
+                  return (
+                    <div className="mt-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-[#071d33] border border-slate-200 dark:border-[#0e355c] text-xs space-y-1">
+                      <div className="flex items-center justify-between gap-1.5">
+                        <div className="flex items-center space-x-1.5 min-w-0">
+                          <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                          <span className="font-bold text-slate-900 dark:text-white truncate text-xs">
+                            {ev.headline}
+                          </span>
+                        </div>
+                        {onNavigateTab && (
+                          <button
+                            type="button"
+                            onClick={() => onNavigateTab('timeline')}
+                            className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline shrink-0 cursor-pointer"
+                          >
+                            Transactions →
+                          </button>
                         )}
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+                      <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-normal">
+                        {ev.summary}
+                      </p>
+                    </div>
+                  );
+                })()}
 
-              {/* Event Logged / Corrected Executive Summary Card */}
-              {(m.recordedEvent || m.correctedEvent) && (() => {
-                const ev = ensureEventHeadlineAndSummary(m.recordedEvent || m.correctedEvent!);
-                return (
-                  <div className="mt-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-[#121829] border border-slate-200/90 dark:border-slate-700/80 text-xs space-y-1 animate-in fade-in">
-                    <div className="flex items-center justify-between gap-1.5">
-                      <div className="flex items-center space-x-1.5 min-w-0">
-                        <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
-                        <span className="font-bold text-slate-900 dark:text-white truncate text-xs">
-                          {ev.headline}
+                {/* Calendar / Ledger Sync Badge */}
+                {(m.calendarUpdatedDate || m.actionBadge) && (
+                  <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-[#16314d]">
+                    <div className="flex items-center justify-between p-2 rounded-xl bg-sky-50 dark:bg-[#081e36] border border-sky-200 dark:border-[#0f3b6a] text-sky-800 dark:text-sky-200 text-xs gap-2">
+                      <div className="flex items-center space-x-2 min-w-0">
+                        <Calendar className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
+                        <span className="font-bold text-[11px] uppercase tracking-wider text-sky-700 dark:text-sky-300 shrink-0">
+                          {m.actionBadge || 'Calendar Synced:'}
+                        </span>
+                        <span className="truncate text-sky-900 dark:text-sky-100 font-medium">
+                          {m.calendarUpdatedDate || 'Today'}
                         </span>
                       </div>
                       {onNavigateTab && (
                         <button
                           type="button"
-                          onClick={() => onNavigateTab('timeline')}
-                          className="flex items-center space-x-0.5 text-[10px] font-bold text-emerald-700 dark:text-emerald-400 hover:underline shrink-0 cursor-pointer"
+                          onClick={() => {
+                            if (onSelectCalendarDate && m.calendarUpdatedDate) {
+                              onSelectCalendarDate(m.calendarUpdatedDate);
+                            }
+                            onNavigateTab('calendar');
+                          }}
+                          className="text-[11px] font-bold text-sky-600 dark:text-sky-400 underline shrink-0 whitespace-nowrap cursor-pointer"
                         >
-                          <span>Transactions</span>
-                          <ArrowRight className="w-3 h-3" />
+                          View Calendar →
                         </button>
                       )}
                     </div>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed font-normal">
-                      {ev.summary}
-                    </p>
                   </div>
-                );
-              })()}
+                )}
 
-              {/* Calendar / Ledger Sync Badge: Confirms event logged or calendar modified */}
-              {(m.calendarUpdatedDate || m.actionBadge || m.recordedEvent || m.correctedEvent) && (
-                <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-700/60 space-y-1.5">
-                  <div className="flex items-center justify-between p-2 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/80 text-blue-950 dark:text-blue-200 text-xs gap-2 animate-in fade-in">
-                    <div className="flex items-center space-x-2 min-w-0">
-                      <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-                      <span className="font-bold text-[11px] uppercase tracking-wider text-blue-700 dark:text-blue-300 shrink-0">
-                        {m.actionBadge || 'Calendar Synced:'}
-                      </span>
-                      <span className="truncate text-blue-900 dark:text-blue-100 font-medium">
-                        {m.calendarUpdatedDate || m.recordedEvent?.date || m.correctedEvent?.date || 'Today'}
-                      </span>
-                    </div>
-                    {onNavigateTab && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const targetDate = m.calendarUpdatedDate || m.recordedEvent?.date || m.correctedEvent?.date;
-                          if (onSelectCalendarDate && targetDate) {
-                            onSelectCalendarDate(targetDate);
-                          }
-                          onNavigateTab('calendar');
-                        }}
-                        className="flex items-center space-x-1 text-[11px] font-bold text-blue-700 dark:text-blue-400 hover:text-blue-900 underline shrink-0 whitespace-nowrap cursor-pointer"
-                      >
-                        <span>View in Calendar</span>
-                        <ArrowRight className="w-3 h-3" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              <span
-                className={`block text-[10px] mt-1.5 ${
-                  m.sender === 'user' ? 'text-slate-300 dark:text-emerald-200 text-right' : 'text-slate-400 dark:text-slate-500'
-                }`}
-              >
-                {m.timestamp}
-              </span>
+                <span className="text-[11px] text-slate-400 dark:text-slate-400 mt-2 block font-normal">
+                  Karra • {m.timestamp}
+                </span>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
 
         {isLoading && (
-          <div className="flex justify-start">
-            <div className="p-3 sm:p-3.5 rounded-2xl bg-white dark:bg-[#161f32] border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 flex items-center space-x-2.5 shadow-2xs">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-600 animate-ping inline-block shrink-0" />
-              <span>Analyzing conversational context and ledger...</span>
+          <div className="flex items-start space-x-2.5 max-w-[92%] animate-in fade-in">
+            <div className="w-8 h-8 rounded-xl bg-[#084b3e] text-emerald-300 flex items-center justify-center shrink-0 mt-0.5">
+              <KarraLogo size="sm" variant="green-bg" />
+            </div>
+            <div className="bg-white dark:bg-[#0d2238] border border-slate-200 dark:border-[#16314d] text-slate-600 dark:text-slate-300 rounded-2xl rounded-tl-xs px-4 py-3 text-xs flex items-center space-x-2.5 shadow-xs">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Karra is thinking...</span>
             </div>
           </div>
         )}
@@ -975,60 +993,103 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         <button
           type="button"
           onClick={() => scrollToBottom('smooth')}
-          className="absolute bottom-16 sm:bottom-20 right-3 sm:right-6 z-30 flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-slate-900/90 dark:bg-emerald-600 text-white text-xs font-semibold shadow-lg hover:bg-slate-800 dark:hover:bg-emerald-500 transition-all animate-in fade-in slide-in-from-bottom-2 cursor-pointer backdrop-blur-xs"
+          className="absolute bottom-20 right-4 sm:right-6 z-30 flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-[#059669] text-white text-xs font-semibold shadow-lg hover:bg-[#047857] transition-all animate-in fade-in slide-in-from-bottom-2 cursor-pointer"
         >
           <ArrowDown className="w-3.5 h-3.5 animate-bounce" />
           <span>Latest messages</span>
         </button>
       )}
 
-      {/* Bottom Input Field - Anchored flex item */}
-      <div className="shrink-0 bg-white dark:bg-[#111726] border-t border-slate-100 dark:border-slate-800/80 p-2 sm:p-3 space-y-1 shadow-[0_-2px_12px_rgba(0,0,0,0.03)] dark:shadow-[0_-2px_12px_rgba(0,0,0,0.2)]">
+      {/* 4. BOTTOM INPUT FIELD (Matching Reference Screenshot 100%) */}
+      <div className="shrink-0 p-3 sm:p-4 bg-white dark:bg-[#061026] border-t border-slate-200 dark:border-[#0d2238]">
+        {/* Quick prompt popup when '+' is clicked */}
+        {showQuickPrompts && (
+          <div className="mb-2.5 p-3 rounded-2xl bg-white dark:bg-[#091829] border border-slate-200 dark:border-[#142c46] shadow-xl space-y-2 animate-in fade-in slide-in-from-bottom-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-300">Quick Prompt Ideas</span>
+              <button
+                type="button"
+                onClick={() => setShowQuickPrompts(false)}
+                className="text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
+              {[
+                { label: 'Who owes me money?', q: 'Who owes me money?' },
+                { label: 'How much did I sell today?', q: 'How much did I sell today?' },
+                { label: 'What did I spend the most on?', q: 'What did I spend the most money on?' },
+                { label: 'Which product made most profit?', q: 'Which product makes me the most profit?' },
+              ].map((qp, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => {
+                    setShowQuickPrompts(false);
+                    handleAsk(qp.q);
+                  }}
+                  className="text-left text-xs p-2 rounded-xl bg-slate-100 dark:bg-[#0d2238] hover:bg-slate-200 dark:hover:bg-[#122e4c] border border-slate-200 dark:border-[#16314d] text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
+                >
+                  {qp.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <form
           onSubmit={(e) => {
             e.preventDefault();
             handleAsk(inputQuestion);
           }}
-          className="relative flex items-center space-x-2"
+          className="relative flex items-center space-x-2 bg-slate-100 dark:bg-[#091829] border border-slate-200 dark:border-[#142c46] rounded-2xl px-2 sm:px-2.5 py-1.5 sm:py-2 shadow-lg focus-within:border-emerald-500/70 transition-colors"
         >
-          <div className="relative flex-1">
-            <input
-              type="text"
-              value={inputQuestion}
-              onFocus={() => setTimeout(() => scrollToBottom('smooth'), 250)}
-              onChange={(e) => setInputQuestion(e.target.value)}
-              placeholder={
-                activeEntity && activeEntity.type === 'customer'
-                  ? `Ask about ${activeEntity.name}...`
-                  : 'Ask about your store, sales, or debts...'
-              }
-              className="w-full pl-3.5 pr-10 py-2.5 sm:py-3 rounded-xl border border-slate-300 dark:border-slate-700 text-base sm:text-sm bg-slate-50/90 dark:bg-[#161f32] focus:bg-white dark:focus:bg-[#1b253b] text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-900 dark:focus:ring-emerald-500 min-h-[46px] transition-all"
-            />
-            {/* Voice toggle inside input */}
-            <button
-              type="button"
-              onClick={handleVoiceToggle}
-              title={
-                !isVoiceSupported
-                  ? 'Voice input not supported in this browser'
-                  : isListening
-                  ? 'Listening... tap to finish'
-                  : 'Tap to speak question'
-              }
-              className={`absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
-                isListening
-                  ? 'bg-rose-600 text-white animate-pulse shadow-md ring-2 ring-rose-400'
-                  : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-              }`}
-            >
-              <Mic className={`w-4 h-4 ${isListening ? 'animate-bounce' : ''}`} />
-            </button>
-          </div>
+          {/* Plus Button */}
+          <button
+            type="button"
+            onClick={() => setShowQuickPrompts(!showQuickPrompts)}
+            className="w-9 h-9 rounded-full bg-slate-200 dark:bg-[#12283e] hover:bg-slate-300 dark:hover:bg-[#1a3857] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors shadow-xs"
+            title="Prompt Shortcuts"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
 
+          {/* Text Input */}
+          <input
+            type="text"
+            value={inputQuestion}
+            onFocus={() => setTimeout(() => scrollToBottom('smooth'), 250)}
+            onChange={(e) => setInputQuestion(e.target.value)}
+            placeholder="Ask about your business..."
+            className="flex-1 bg-transparent text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none px-2 min-h-[40px]"
+          />
+
+          {/* Microphone Voice Button */}
+          <button
+            type="button"
+            onClick={handleVoiceToggle}
+            title={
+              !isVoiceSupported
+                ? 'Voice input not supported in this browser'
+                : isListening
+                ? 'Listening... tap to finish'
+                : 'Tap to speak question'
+            }
+            className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors shrink-0 cursor-pointer ${
+              isListening
+                ? 'bg-rose-600 text-white animate-pulse shadow-md ring-2 ring-rose-400'
+                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+            }`}
+          >
+            <Mic className={`w-4 h-4 ${isListening ? 'animate-bounce' : ''}`} />
+          </button>
+
+          {/* Send Button */}
           <button
             type="submit"
             disabled={!inputQuestion.trim() || isLoading}
-            className="px-3.5 sm:px-4 py-2.5 sm:py-3 rounded-xl bg-slate-900 dark:bg-emerald-600 text-white hover:bg-slate-800 dark:hover:bg-emerald-500 disabled:opacity-40 min-h-[46px] min-w-[46px] flex items-center justify-center transition-all shrink-0 shadow-xs cursor-pointer active:scale-95"
+            className="w-9 h-9 rounded-full bg-[#059669] hover:bg-[#047857] disabled:opacity-40 disabled:hover:bg-[#059669] text-white flex items-center justify-center shrink-0 shadow-xs transition-colors cursor-pointer"
             title="Send Message"
           >
             <Send className="w-4 h-4" />
@@ -1036,17 +1097,17 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         </form>
 
         {isListening && (
-          <div className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-800 dark:text-rose-200 font-medium flex items-center justify-between animate-in fade-in">
+          <div className="mt-2 p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-800 dark:text-rose-200 font-medium flex items-center justify-between animate-in fade-in">
             <div className="flex items-center space-x-2 truncate">
               <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping inline-block shrink-0" />
               <span className="font-semibold text-rose-900 dark:text-rose-100">
-                {interimTranscript ? `"${interimTranscript}"` : 'Listening... Speak your question or update naturally'}
+                {interimTranscript ? `"${interimTranscript}"` : 'Listening... Speak naturally'}
               </span>
             </div>
             <button
               type="button"
               onClick={handleVoiceToggle}
-              className="text-[11px] font-bold text-rose-700 dark:text-rose-300 hover:underline shrink-0 ml-2"
+              className="text-[11px] font-bold text-rose-600 dark:text-rose-300 hover:underline shrink-0 ml-2 cursor-pointer"
             >
               Done
             </button>
@@ -1054,28 +1115,10 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         )}
 
         {voiceError && !isListening && (
-          <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 flex items-center space-x-2 animate-in fade-in">
+          <div className="mt-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 flex items-center space-x-2 animate-in fade-in">
             <span>{voiceError}</span>
           </div>
         )}
-
-        {/* Live Business Memory Footer Indicator */}
-        <div className="flex items-center justify-between text-[10px] sm:text-[11px] text-slate-400 dark:text-slate-500 px-0.5">
-          <div className="flex items-center space-x-2 truncate">
-            <span>🧠 Notes: <strong className="text-slate-700 dark:text-slate-300">{totalCustomerNotes}</strong></span>
-            <span>•</span>
-            <span>🏷️ Rules: <strong className="text-slate-700 dark:text-slate-300">{totalRules}</strong></span>
-          </div>
-          {onNavigateTab && (
-            <button
-              type="button"
-              onClick={() => onNavigateTab('memory')}
-              className="text-emerald-700 dark:text-emerald-400 hover:underline font-semibold shrink-0 cursor-pointer"
-            >
-              Memory Bank →
-            </button>
-          )}
-        </div>
       </div>
     </div>
   );

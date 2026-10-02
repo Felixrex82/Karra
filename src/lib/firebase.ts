@@ -25,6 +25,11 @@ import {
   updateDoc,
   getDocFromServer,
   Firestore,
+  collection,
+  getDocs,
+  query,
+  limit,
+  orderBy,
 } from 'firebase/firestore';
 import { BusinessState, UserProfile } from '../types';
 import firebaseConfig from '../../firebase-applet-config.json';
@@ -533,4 +538,85 @@ export async function loadBusinessLedger(
     return { status: 'error', error: err };
   }
 }
+
+/**
+ * Admin: Fetch all users from Firestore along with their actual business ledger summary
+ */
+export async function fetchAdminAllFirestoreUsers(): Promise<Array<{
+  profile: UserProfile;
+  ledger?: Partial<BusinessState> | null;
+}>> {
+  if (!auth.currentUser) return [];
+  try {
+    const usersCol = collection(db, 'users');
+    const snapshot = await getDocs(usersCol);
+    const results: Array<{ profile: UserProfile; ledger?: Partial<BusinessState> | null }> = [];
+
+    for (const userDoc of snapshot.docs) {
+      const profile = userDoc.data() as UserProfile;
+      let ledgerData: Partial<BusinessState> | null = null;
+      try {
+        const ledgerRef = doc(db, 'users', userDoc.id, 'data', 'ledger');
+        const ledgerSnap = await getDoc(ledgerRef);
+        if (ledgerSnap.exists()) {
+          ledgerData = ledgerSnap.data() as Partial<BusinessState>;
+        }
+      } catch {
+        // Individual ledger read error ignored
+      }
+      results.push({ profile, ledger: ledgerData });
+    }
+
+    return results;
+  } catch (err) {
+    console.warn('Could not fetch all users from Firestore (might not be admin or offline):', err);
+    return [];
+  }
+}
+
+/**
+ * Admin: Fetch Firestore feedback records
+ */
+export async function fetchAdminFirestoreFeedback(): Promise<any[]> {
+  if (!auth.currentUser) return [];
+  try {
+    const colRef = collection(db, 'beta_feedback');
+    const q = query(colRef, orderBy('createdAt', 'desc'), limit(150));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Admin: Fetch Firestore access requests
+ */
+export async function fetchAdminFirestoreAccessRequests(): Promise<any[]> {
+  if (!auth.currentUser) return [];
+  try {
+    const colRef = collection(db, 'beta_access_requests');
+    const q = query(colRef, orderBy('createdAt', 'desc'), limit(150));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Admin: Fetch Firestore beta events
+ */
+export async function fetchAdminFirestoreEvents(limitCount = 200): Promise<any[]> {
+  if (!auth.currentUser) return [];
+  try {
+    const colRef = collection(db, 'beta_events');
+    const q = query(colRef, orderBy('timestamp', 'desc'), limit(limitCount));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch {
+    return [];
+  }
+}
+
 

@@ -148,6 +148,7 @@ export default async function handler(req: any, res: any) {
     let structuredAction: any = null;
     let calendarDate: string | null = null;
     let calendarAction: string | null = null;
+    let requiresClarification = false;
 
     try {
       const parsed = JSON.parse(response.text || '{}');
@@ -160,6 +161,7 @@ export default async function handler(req: any, res: any) {
       structuredAction = parsed.structuredAction || null;
       calendarDate = parsed.calendarDate || null;
       calendarAction = parsed.calendarAction || null;
+      requiresClarification = Boolean(parsed.requiresClarification);
     } catch {
       answerText = response.text || 'I have noted that down for your business.';
     }
@@ -177,6 +179,7 @@ export default async function handler(req: any, res: any) {
         structuredAction,
         calendarDate,
         calendarAction,
+        requiresClarification,
       },
       memories: extractedMemories,
       recordedEvent,
@@ -186,6 +189,7 @@ export default async function handler(req: any, res: any) {
       structuredAction,
       calendarDate,
       calendarAction,
+      requiresClarification,
     });
   } catch (err: any) {
     console.error('[Gemini Ask Error]:', err?.message || err);

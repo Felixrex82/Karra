@@ -48,6 +48,7 @@ import { processNaturalInput } from './engine/nlpInterpreter';
 import { getTodayDateStr, getYesterdayDateStr } from './utils/dateUtils';
 import { Sparkles } from 'lucide-react';
 import { ensureEventHeadlineAndSummary, ensureMemoryHeadlineAndSummary } from './engine/eventSummarizer';
+import { trackAppEvent } from './utils/analyticsTracker';
 
 const getStorageKey = (uid?: string | null): string => {
   if (!uid) return 'kudios_guest_state';
@@ -518,6 +519,7 @@ export default function App() {
           conversationState: null,
           chatHistory: [...(prev.chatHistory || []), userMsg, aiMsg],
         }));
+        trackAppEvent('ai_query', { question: inputText }, { businessName: state.businessName });
         showToast(answerText, 'info');
         setActiveTab('questions');
       } else if (result.followUpRequired) {
@@ -777,6 +779,17 @@ export default function App() {
         }));
 
         showToast(result.plainResponseText, 'success');
+
+        // Track real merchant action in admin center
+        const hasSale = result.createdEvents?.some((e) => e.type === 'SALE' || (e.totalRevenue && e.totalRevenue > 0));
+        const hasExpense = result.createdEvents?.some((e) => e.type === 'EXPENSE' || (e.totalCostAtTime && e.totalCostAtTime > 0));
+        if (hasSale) {
+          trackAppEvent('sale_recorded', { input: inputText }, { businessName: state.businessName });
+        } else if (hasExpense) {
+          trackAppEvent('expense_recorded', { input: inputText }, { businessName: state.businessName });
+        } else {
+          trackAppEvent('natural_input_processed', { input: inputText }, { businessName: state.businessName });
+        }
       }
     } catch (err: any) {
       console.error('Error processing natural input:', err);

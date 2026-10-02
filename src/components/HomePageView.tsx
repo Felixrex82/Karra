@@ -133,7 +133,7 @@ export const HomePageView: React.FC<HomePageViewProps> = ({
               Let's get your business moving
             </h2>
             <p className="text-xs sm:text-sm text-[#8BA3AE] mb-4">
-              Tell Karra what you want to do. For example:
+              Type or speak what you want to record. For example:
             </p>
 
             {/* Follow-up question banner if active */}
@@ -478,7 +478,7 @@ export const HomePageView: React.FC<HomePageViewProps> = ({
               Need help?
             </h4>
             <p className="text-xs text-emerald-900/80 dark:text-emerald-200/70 truncate">
-              Just tell Karra what you want to do. It's that simple.
+              Ask any question or record any business transaction easily.
             </p>
           </div>
         </div>

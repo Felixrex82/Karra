@@ -1,61 +1,98 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
-  ShieldCheck,
-  Key,
-  Users,
-  MessageSquare,
-  BarChart3,
-  Plus,
-  Copy,
-  Check,
-  Trash2,
-  RefreshCw,
-  AlertTriangle,
-  UserX,
-  UserCheck,
-  Send,
-  ExternalLink,
-  ArrowRight,
-  Sparkles,
-  Building2,
-  Mail,
-  Phone,
-  CheckCircle2,
-  Clock,
-  ChevronRight,
-} from 'lucide-react';
+  AdminSidebar,
+  AdminTab,
+} from './admin/AdminSidebar';
+import {
+  AdminHeader,
+} from './admin/AdminHeader';
+import {
+  AdminOverviewTab,
+} from './admin/AdminOverviewTab';
+import {
+  AdminUsersTab,
+} from './admin/AdminUsersTab';
+import {
+  AdminActivityTab,
+} from './admin/AdminActivityTab';
+import {
+  AdminAnalyticsTab,
+} from './admin/AdminAnalyticsTab';
+import {
+  AdminFeedbackTab,
+} from './admin/AdminFeedbackTab';
+import {
+  AdminBetaTab,
+} from './admin/AdminBetaTab';
+import {
+  AdminSettingsTab,
+} from './admin/AdminSettingsTab';
+import {
+  AdminBusinessDetailModal,
+} from './admin/AdminBusinessDetailModal';
+import {
+  AdminUserRecord,
+  AdminEventRecord,
+  DailyActivityRecord,
+  AdminDateRange,
+} from './admin/adminTypes';
+import {
+  BetaInvitation,
+  BetaFeedbackItem,
+  BetaAccessRequest,
+} from '../types';
 import { useAuth } from '../contexts/AuthContext';
-import { BetaInvitation, BetaFeedbackItem, BetaAccessRequest, BetaAnalytics } from '../types';
+import {
+  fetchAdminAllFirestoreUsers,
+  fetchAdminFirestoreEvents,
+  fetchAdminFirestoreFeedback,
+  fetchAdminFirestoreAccessRequests,
+} from '../lib/firebase';
 
 interface AdminDashboardViewProps {
   onShowToast?: (message: string, type?: 'success' | 'info' | 'warning') => void;
   onNavigateTab?: (tab: string) => void;
   onUnauthorized?: () => void;
+  onExitAdmin?: () => void;
 }
+
+const FOUNDER_EMAIL = 'olamidefelix54@gmail.com';
 
 export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onShowToast,
   onNavigateTab,
   onUnauthorized,
+  onExitAdmin,
 }) => {
-
   const { user } = useAuth();
-  const [activeSubTab, setActiveSubTab] = useState<'overview' | 'invitations' | 'requests' | 'users' | 'feedback'>('overview');
+
+  // Active navigation tab
+  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+
+  // Global Date Range State
+  const [dateRange, setDateRange] = useState<AdminDateRange>('7d');
+  const [customStartDate, setCustomStartDate] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 7);
+    return d.toISOString().slice(0, 10);
+  });
+  const [customEndDate, setCustomEndDate] = useState<string>(() => {
+    return new Date().toISOString().slice(0, 10);
+  });
 
   // Data states
+  const [users, setUsers] = useState<AdminUserRecord[]>([]);
+  const [events, setEvents] = useState<AdminEventRecord[]>([]);
   const [invitations, setInvitations] = useState<BetaInvitation[]>([]);
-  const [users, setUsers] = useState<any[]>([]);
   const [feedbackList, setFeedbackList] = useState<BetaFeedbackItem[]>([]);
   const [accessRequests, setAccessRequests] = useState<BetaAccessRequest[]>([]);
-  const [analytics, setAnalytics] = useState<BetaAnalytics | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
 
-  // New invitation form state
-  const [newNotes, setNewNotes] = useState('');
-  const [newMaxUses, setNewMaxUses] = useState(1);
-  const [newExpiryDays, setNewExpiryDays] = useState<number | ''>('');
-  const [isCreatingInvite, setIsCreatingInvite] = useState(false);
-  const [copiedCode, setCopiedCode] = useState<string | null>(null);
+  // Drilldown / Detail modal
+  const [selectedUser, setSelectedUser] = useState<AdminUserRecord | null>(null);
 
   const getAdminSecret = () => {
     try {
@@ -74,9 +111,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
     const secret = getAdminSecret();
     return {
       'Content-Type': 'application/json',
-      'x-admin-email': user?.email || 'olamidefelix54@gmail.com',
+      'x-admin-email': user?.email || FOUNDER_EMAIL,
       'x-admin-secret': secret,
-      ...(secret ? { 'Authorization': `Bearer ${secret}` } : {}),
+      ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
     };
   };
 
@@ -86,846 +123,646 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         ...getAdminHeaders(),
         ...(options.headers || {}),
       };
-      const res = await fetch(url, {
-        ...options,
-        headers,
-      });
+      const res = await fetch(url, { ...options, headers });
 
       if (res.status === 401 || res.status === 403) {
-        const errorData = await res.json().catch(() => ({}));
-        return { success: false, error: errorData?.error || `Unauthorized (${res.status})` };
+        if (onUnauthorized) onUnauthorized();
+        return { success: false, error: 'Unauthorized' };
       }
 
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        console.warn(`Non-JSON response from ${url}: status ${res.status}`);
-        return { success: false, error: `Endpoint returned status ${res.status}` };
+        return { success: false, error: `Status ${res.status}` };
       }
       return await res.json();
     } catch (err: any) {
-      console.warn(`Fetch error for ${url}:`, err);
       return { success: false, error: err?.message || 'Network error' };
     }
   };
 
-  const getLocalStoredInvitations = (): BetaInvitation[] => {
-    try {
-      const raw = localStorage.getItem('karra_custom_invitations');
-      return raw ? JSON.parse(raw) : [];
-    } catch {
-      return [];
-    }
-  };
+  // Reconcile and load real data
+  const loadAllData = useCallback(async (isSilent = false) => {
+    if (!isSilent) setIsLoading(true);
+    setIsRefreshing(true);
 
-  const saveLocalStoredInvitations = (invs: BetaInvitation[]) => {
     try {
-      localStorage.setItem('karra_custom_invitations', JSON.stringify(invs));
-    } catch (e) {
-      console.error('Error saving local invitations:', e);
-    }
-  };
-
-  const generateLocalCode = (): string => {
-    const charset = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
-    const randPart = (len: number) => {
-      let res = '';
-      for (let i = 0; i < len; i++) res += charset[Math.floor(Math.random() * charset.length)];
-      return res;
-    };
-    return `KARRA-${randPart(4)}-${randPart(4)}`;
-  };
-
-  const loadAllData = async () => {
-    setIsLoading(true);
-    try {
-      const [invData, usersData, fbData, reqData, anaData] = await Promise.all([
+      // 1. Fetch Backend API Endpoints in parallel
+      const [invData, usersData, fbData, reqData, eventsData] = await Promise.all([
         safeFetchJson('/api/admin/invitations'),
         safeFetchJson('/api/admin/users'),
         safeFetchJson('/api/admin/feedback'),
         safeFetchJson('/api/admin/access-requests'),
-        safeFetchJson('/api/admin/analytics'),
+        safeFetchJson('/api/admin/events?limit=1000'),
       ]);
 
-      const localInvs = getLocalStoredInvitations();
-      const serverInvs: BetaInvitation[] = invData?.invitations || [];
-      const codeMap = new Map<string, BetaInvitation>();
-      [...localInvs, ...serverInvs].forEach(inv => codeMap.set(inv.code, inv));
+      // 2. Fetch Live Firestore data in parallel if founder has Firebase session
+      let firestoreUsers: Array<{ profile: any; ledger?: any }> = [];
+      let firestoreEvents: any[] = [];
+      let firestoreFeedback: any[] = [];
+      let firestoreRequests: any[] = [];
 
-      if (codeMap.size === 0) {
-        const seedInvs: BetaInvitation[] = [
-          { id: 'inv_1', code: 'KARRA-ALAB-8821', status: 'active', maxUses: 1, currentUses: 0, createdAt: new Date().toISOString(), expiresAt: null, createdBy: 'olamidefelix54@gmail.com', notes: 'Private Beta Tester 1 (Alaba Electronics)', usedBy: [], redeemedAt: null },
-          { id: 'inv_2', code: 'KARRA-LEKK-3914', status: 'active', maxUses: 1, currentUses: 0, createdAt: new Date().toISOString(), expiresAt: null, createdBy: 'olamidefelix54@gmail.com', notes: 'Private Beta Tester 2 (Lekki Boutique)', usedBy: [], redeemedAt: null },
-          { id: 'inv_3', code: 'KARRA-YABA-7720', status: 'active', maxUses: 1, currentUses: 0, createdAt: new Date().toISOString(), expiresAt: null, createdBy: 'olamidefelix54@gmail.com', notes: 'Private Beta Tester 3 (Yaba Wholesale Provision)', usedBy: [], redeemedAt: null },
-          { id: 'inv_4', code: 'KARRA-IKEJ-5519', status: 'active', maxUses: 1, currentUses: 0, createdAt: new Date().toISOString(), expiresAt: null, createdBy: 'olamidefelix54@gmail.com', notes: 'Private Beta Tester 4 (Ikeja Computer Village)', usedBy: [], redeemedAt: null },
-          { id: 'inv_5', code: 'KARRA-SURL-9943', status: 'active', maxUses: 1, currentUses: 0, createdAt: new Date().toISOString(), expiresAt: null, createdBy: 'olamidefelix54@gmail.com', notes: 'Private Beta Tester 5 (Surulere Supermarket)', usedBy: [], redeemedAt: null },
-        ];
-        saveLocalStoredInvitations(seedInvs);
-        seedInvs.forEach(inv => codeMap.set(inv.code, inv));
+      try {
+        const [fsUsers, fsEvents, fsFb, fsReqs] = await Promise.all([
+          fetchAdminAllFirestoreUsers(),
+          fetchAdminFirestoreEvents(500),
+          fetchAdminFirestoreFeedback(),
+          fetchAdminFirestoreAccessRequests(),
+        ]);
+        firestoreUsers = fsUsers || [];
+        firestoreEvents = fsEvents || [];
+        firestoreFeedback = fsFb || [];
+        firestoreRequests = fsReqs || [];
+      } catch (fsErr) {
+        console.warn('Firestore admin direct read skipped or partially loaded:', fsErr);
       }
 
-      setInvitations(Array.from(codeMap.values()));
+      // 3. Reconcile Users (Real database data only)
+      const userMap = new Map<string, AdminUserRecord>();
 
-      if (usersData?.users) setUsers(usersData.users);
-      if (fbData?.feedback) setFeedbackList(fbData.feedback);
-      if (reqData?.requests) setAccessRequests(reqData.requests);
-      if (anaData?.analytics) setAnalytics(anaData.analytics);
+      // Populate from Server users
+      if (Array.isArray(usersData?.users)) {
+        usersData.users.forEach((u: any) => {
+          const uid = u.userId || u.id;
+          if (!uid) return;
+          userMap.set(uid, {
+            userId: uid,
+            email: u.email || '',
+            businessName: u.businessName || 'Business Account',
+            ownerName: u.ownerName || '',
+            joinedAt: u.joinedAt || u.betaJoinedAt || new Date().toISOString(),
+            lastActiveAt: u.lastActiveAt || u.joinedAt || new Date().toISOString(),
+            status: u.betaStatus === 'suspended' ? 'suspended' : 'active',
+            betaStatus: u.betaStatus || 'active',
+            betaInvitationCode: u.betaInvitationCode,
+            role: u.role || 'merchant',
+            totalTransactions: u.transactionCount || 0,
+            salesCount: u.salesCount || 0,
+            expensesCount: u.expensesCount || 0,
+            stockUpdatesCount: u.stockCount || 0,
+            customersCount: u.customersCount || 0,
+            aiInteractionsCount: u.aiQueryCount || 0,
+            memoryUpdatesCount: 0,
+            activeDaysCount: 1,
+          });
+        });
+      }
+
+      // Merge with Firestore live profiles & actual ledgers
+      firestoreUsers.forEach(({ profile, ledger }) => {
+        if (!profile || !profile.id) return;
+        const uid = profile.id;
+        const existing = userMap.get(uid);
+
+        // Analyze real ledger events if present
+        let totalTx = 0;
+        let sales = 0;
+        let expenses = 0;
+        let stock = 0;
+        let customers = 0;
+        let aiQueries = 0;
+        let distinctDays = new Set<string>();
+
+        if (ledger) {
+          const ledgerEvents: any[] = ledger.events || [];
+          totalTx = ledgerEvents.length;
+          sales = ledgerEvents.filter((e: any) => e.type === 'SALE' || (e.totalRevenue && e.totalRevenue > 0)).length;
+          expenses = ledgerEvents.filter((e: any) => e.type === 'EXPENSE' || (e.totalCostAtTime && e.totalCostAtTime > 0)).length;
+          stock = (ledger.products || []).length;
+          customers = (ledger.customers || []).length;
+          aiQueries = (ledger.chatHistory || []).length;
+
+          ledgerEvents.forEach((ev: any) => {
+            const dateStr = ev.date || (ev.timestamp ? ev.timestamp.slice(0, 10) : null);
+            if (dateStr) distinctDays.add(dateStr);
+          });
+        }
+
+        const mergedRecord: AdminUserRecord = {
+          userId: uid,
+          email: profile.email || existing?.email || '',
+          businessName: ledger?.businessName || profile.businessName || existing?.businessName || 'Business Account',
+          ownerName: ledger?.ownerName || profile.displayName || existing?.ownerName || '',
+          joinedAt: profile.createdAt || profile.betaJoinedAt || existing?.joinedAt || new Date().toISOString(),
+          lastActiveAt:
+            ledger?.updatedAt ||
+            profile.updatedAt ||
+            existing?.lastActiveAt ||
+            new Date().toISOString(),
+          status: profile.betaStatus === 'suspended' ? 'suspended' : 'active',
+          betaStatus: profile.betaStatus || existing?.betaStatus || 'active',
+          betaInvitationCode: profile.betaInvitationCode || existing?.betaInvitationCode,
+          role: profile.role || existing?.role || 'merchant',
+          totalTransactions: Math.max(totalTx, existing?.totalTransactions || 0),
+          salesCount: Math.max(sales, existing?.salesCount || 0),
+          expensesCount: Math.max(expenses, existing?.expensesCount || 0),
+          stockUpdatesCount: Math.max(stock, existing?.stockUpdatesCount || 0),
+          customersCount: Math.max(customers, existing?.customersCount || 0),
+          aiInteractionsCount: Math.max(aiQueries, existing?.aiInteractionsCount || 0),
+          memoryUpdatesCount: 0,
+          activeDaysCount: Math.max(distinctDays.size, existing?.activeDaysCount || 1),
+          productsCount: (ledger?.products || []).length,
+        };
+
+        userMap.set(uid, mergedRecord);
+      });
+
+      const reconciledUsers = Array.from(userMap.values()).sort((a, b) =>
+        new Date(b.lastActiveAt || b.joinedAt).getTime() - new Date(a.lastActiveAt || a.joinedAt).getTime()
+      );
+      setUsers(reconciledUsers);
+
+      // 4. Reconcile Events (server events + firestore events + ledger events)
+      const eventMap = new Map<string, AdminEventRecord>();
+
+      // Server tracked events
+      if (Array.isArray(eventsData?.events)) {
+        eventsData.events.forEach((ev: any) => {
+          if (ev && ev.id) eventMap.set(ev.id, ev);
+        });
+      }
+
+      // Firestore tracked events
+      firestoreEvents.forEach((ev: any) => {
+        if (ev && ev.id) eventMap.set(ev.id, ev);
+      });
+
+      // Extract real events from Firestore ledgers so timeline is populated
+      firestoreUsers.forEach(({ profile, ledger }) => {
+        if (!ledger || !Array.isArray(ledger.events)) return;
+        ledger.events.forEach((lev: any) => {
+          const evId = lev.id || `lev_${lev.date}_${lev.totalRevenue || lev.amount}`;
+          if (!eventMap.has(evId)) {
+            const isSale = lev.type === 'SALE' || (lev.totalRevenue && lev.totalRevenue > 0);
+            eventMap.set(evId, {
+              id: evId,
+              userId: profile.id,
+              userEmail: profile.email || '',
+              businessName: ledger.businessName || profile.businessName || 'Business Account',
+              eventName: isSale ? 'sale_recorded' : 'expense_recorded',
+              timestamp: lev.timestamp || (lev.date ? `${lev.date}T12:00:00.000Z` : new Date().toISOString()),
+              metadata: {
+                amount: lev.totalRevenue || lev.amount || lev.cashReceived,
+                headline: lev.headline || lev.note,
+              },
+            });
+          }
+        });
+      });
+
+      const reconciledEvents = Array.from(eventMap.values()).sort((a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+      setEvents(reconciledEvents);
+
+      // 5. Invitations (strictly real invitations from backend & local storage)
+      const serverInvs: BetaInvitation[] = Array.isArray(invData?.invitations) ? invData.invitations : [];
+      setInvitations(serverInvs);
+
+      // 6. Feedback
+      const feedbackMap = new Map<string, BetaFeedbackItem>();
+      if (Array.isArray(fbData?.feedback)) {
+        fbData.feedback.forEach((f: any) => feedbackMap.set(f.id, f));
+      }
+      firestoreFeedback.forEach((f: any) => {
+        if (f && f.id) feedbackMap.set(f.id, f);
+      });
+      setFeedbackList(Array.from(feedbackMap.values()).sort((a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      ));
+
+      // 7. Access Requests
+      const reqMap = new Map<string, BetaAccessRequest>();
+      if (Array.isArray(reqData?.requests)) {
+        reqData.requests.forEach((r: any) => reqMap.set(r.id, r));
+      }
+      firestoreRequests.forEach((r: any) => {
+        if (r && r.id) reqMap.set(r.id, r);
+      });
+      setAccessRequests(Array.from(reqMap.values()).sort((a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+      ));
+
+      setLastRefreshedAt(new Date());
     } catch (err) {
-      console.error('Error fetching admin data:', err);
+      console.error('Failed to load admin records:', err);
     } finally {
       setIsLoading(false);
+      setIsRefreshing(false);
     }
-  };
+  }, [user?.email]);
 
   useEffect(() => {
     loadAllData();
-  }, []);
+  }, [loadAllData]);
 
-  const handleCreateInvitation = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsCreatingInvite(true);
-    try {
-      const expiresAt =
-        typeof newExpiryDays === 'number' && newExpiryDays > 0
-          ? new Date(Date.now() + newExpiryDays * 24 * 60 * 60 * 1000).toISOString()
-          : null;
+  // Determine active date boundaries
+  const { filterStartDate, filterEndDate, prevStartDate, prevEndDate, dateRangeLabel } = useMemo(() => {
+    const now = new Date();
+    let start: Date | undefined;
+    let end: Date | undefined = now;
+    let prevStart: Date | undefined;
+    let prevEnd: Date | undefined;
+    let label = 'Last 7 Days';
 
-      let createdInvitation: BetaInvitation | null = null;
+    if (dateRange === 'today') {
+      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+      start = todayStart;
+      prevStart = new Date(todayStart.getTime() - 24 * 60 * 60 * 1000);
+      prevEnd = todayStart;
+      label = 'Today';
+    } else if (dateRange === '7d') {
+      start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      prevStart = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+      prevEnd = start;
+      label = 'Last 7 Days';
+    } else if (dateRange === '30d') {
+      start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      prevStart = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+      prevEnd = start;
+      label = 'Last 30 Days';
+    } else if (dateRange === '90d') {
+      start = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+      prevStart = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+      prevEnd = start;
+      label = 'Last 90 Days';
+    } else if (dateRange === 'custom') {
+      start = customStartDate ? new Date(`${customStartDate}T00:00:00`) : undefined;
+      end = customEndDate ? new Date(`${customEndDate}T23:59:59`) : undefined;
+      label = `${customStartDate} to ${customEndDate}`;
+    }
 
-      // 1. Try server endpoint
-      const data = await safeFetchJson('/api/admin/invitations/create', {
-        method: 'POST',
-        body: JSON.stringify({
-          notes: newNotes.trim() || undefined,
-          maxUses: Number(newMaxUses) || 1,
-          expiresAt,
-        }),
+    return {
+      filterStartDate: start,
+      filterEndDate: end,
+      prevStartDate: prevStart,
+      prevEndDate: prevEnd,
+      dateRangeLabel: label,
+    };
+  }, [dateRange, customStartDate, customEndDate]);
+
+  // Compute Daily Activity Buckets across selected date range
+  const dailyActivity: DailyActivityRecord[] = useMemo(() => {
+    if (!filterStartDate) return [];
+
+    const daysCount = Math.max(
+      1,
+      Math.min(
+        90,
+        Math.ceil(((filterEndDate ? filterEndDate.getTime() : Date.now()) - filterStartDate.getTime()) / (24 * 60 * 60 * 1000))
+      )
+    );
+
+    const result: DailyActivityRecord[] = [];
+    const dateMap = new Map<string, DailyActivityRecord>();
+
+    // Initialize calendar days in range
+    for (let i = 0; i < daysCount; i++) {
+      const d = new Date(filterStartDate.getTime() + i * 24 * 60 * 60 * 1000);
+      const dateStr = d.toISOString().slice(0, 10);
+      const displayDate = d.toLocaleDateString([], {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
       });
 
-      if (data?.success && data.invitation) {
-        createdInvitation = data.invitation;
-      } else {
-        // 2. Fallback: generate resilient cryptographic invitation locally
-        const fallbackCode = generateLocalCode();
-        createdInvitation = {
-          id: 'inv_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-          code: fallbackCode,
-          status: 'active',
-          maxUses: Number(newMaxUses) || 1,
-          currentUses: 0,
-          createdAt: new Date().toISOString(),
-          expiresAt,
-          createdBy: user?.email || 'olamidefelix54@gmail.com',
-          notes: newNotes.trim() || undefined,
-          usedBy: [],
-          redeemedAt: null,
-        };
-      }
+      const record: DailyActivityRecord = {
+        dateStr,
+        displayDate,
+        newUsers: 0,
+        activeUsers: 0,
+        transactions: 0,
+        aiInteractions: 0,
+        activeUserIds: [],
+        events: [],
+      };
+      dateMap.set(dateStr, record);
+      result.push(record);
+    }
 
-      if (createdInvitation) {
-        // Save to local storage cache so it persists and is valid immediately
-        const existing = getLocalStoredInvitations();
-        const updated = [createdInvitation, ...existing.filter(i => i.code !== createdInvitation!.code)];
-        saveLocalStoredInvitations(updated);
-
-        if (onShowToast) onShowToast(`Generated code: ${createdInvitation.code}`, 'success');
-        setNewNotes('');
-        setNewMaxUses(1);
-        setNewExpiryDays('');
-        loadAllData();
+    // Bucket New Users by Join Date
+    users.forEach((u) => {
+      const joinDay = u.joinedAt ? u.joinedAt.slice(0, 10) : null;
+      if (joinDay && dateMap.has(joinDay)) {
+        dateMap.get(joinDay)!.newUsers += 1;
       }
-    } catch (err: any) {
-      if (onShowToast) onShowToast(err.message || 'Failed to create code', 'warning');
-    } finally {
-      setIsCreatingInvite(false);
+    });
+
+    // Bucket Events
+    events.forEach((ev) => {
+      const evDay = ev.timestamp ? ev.timestamp.slice(0, 10) : null;
+      if (evDay && dateMap.has(evDay)) {
+        const item = dateMap.get(evDay)!;
+        item.events.push(ev);
+
+        if (ev.userId && !item.activeUserIds.includes(ev.userId)) {
+          item.activeUserIds.push(ev.userId);
+        }
+
+        if (['sale_recorded', 'expense_recorded', 'stock_updated', 'transaction_created', 'debt_recorded'].includes(ev.eventName)) {
+          item.transactions += 1;
+        }
+
+        if (['ai_query', 'ai_interaction', 'ai_interpret', 'conversational_question'].includes(ev.eventName)) {
+          item.aiInteractions += 1;
+        }
+      }
+    });
+
+    // Set activeUsers count per day
+    result.forEach((item) => {
+      item.activeUsers = item.activeUserIds.length;
+    });
+
+    return result;
+  }, [filterStartDate, filterEndDate, users, events]);
+
+  // Compute Previous Period Stats for comparison percentages
+  const comparisonStats = useMemo(() => {
+    if (!prevStartDate || !prevEndDate) return undefined;
+
+    const pStart = prevStartDate.getTime();
+    const pEnd = prevEndDate.getTime();
+
+    const prevNewUsers = users.filter((u) => {
+      const t = new Date(u.joinedAt).getTime();
+      return t >= pStart && t < pEnd;
+    }).length;
+
+    const prevEvents = events.filter((e) => {
+      const t = new Date(e.timestamp).getTime();
+      return t >= pStart && t < pEnd;
+    });
+
+    const activeIds = new Set<string>();
+    let prevTx = 0;
+    let prevAi = 0;
+
+    prevEvents.forEach((e) => {
+      if (e.userId) activeIds.add(e.userId);
+      if (['sale_recorded', 'expense_recorded', 'stock_updated', 'transaction_created', 'debt_recorded'].includes(e.eventName)) {
+        prevTx += 1;
+      }
+      if (['ai_query', 'ai_interaction', 'conversational_question'].includes(e.eventName)) {
+        prevAi += 1;
+      }
+    });
+
+    return {
+      prevNewUsers,
+      prevActiveUsers: activeIds.size,
+      prevTransactions: prevTx,
+      prevAiInteractions: prevAi,
+    };
+  }, [prevStartDate, prevEndDate, users, events]);
+
+  // Create new invitation handler
+  const handleCreateInvitation = async (params: {
+    maxUses?: number;
+    notes?: string;
+    expiresAt?: string | null;
+    customCode?: string;
+  }): Promise<BetaInvitation | null> => {
+    const res = await safeFetchJson('/api/admin/invitations/create', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+
+    if (res?.success && res.invitation) {
+      setInvitations((prev) => [res.invitation, ...prev]);
+      return res.invitation;
+    }
+    return null;
+  };
+
+  // Revoke invitation handler
+  const handleRevokeInvitation = async (code: string): Promise<boolean> => {
+    const res = await safeFetchJson('/api/admin/invitations/revoke', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    });
+
+    if (res?.success) {
+      setInvitations((prev) =>
+        prev.map((i) => (i.code === code ? { ...i, status: 'revoked' } : i))
+      );
+      return true;
+    }
+    return false;
+  };
+
+  // Update user beta access status handler
+  const handleUpdateUserStatus = async (
+    userId: string,
+    newStatus: 'active' | 'suspended' | 'revoked'
+  ): Promise<void> => {
+    await safeFetchJson('/api/admin/users/status', {
+      method: 'POST',
+      body: JSON.stringify({ userId, status: newStatus }),
+    });
+
+    setUsers((prev) =>
+      prev.map((u) => (u.userId === userId ? { ...u, betaStatus: newStatus } : u))
+    );
+
+    if (selectedUser && selectedUser.userId === userId) {
+      setSelectedUser((prev) => (prev ? { ...prev, betaStatus: newStatus } : null));
     }
   };
 
-  const handleRevokeInvitation = async (code: string) => {
-    try {
-      await safeFetchJson('/api/admin/invitations/revoke', {
-        method: 'POST',
-        body: JSON.stringify({ code }),
-      });
+  // Update feedback status handler
+  const handleUpdateFeedbackStatus = async (
+    id: string,
+    status: 'open' | 'reviewed' | 'resolved'
+  ): Promise<void> => {
+    await safeFetchJson('/api/admin/feedback/status', {
+      method: 'POST',
+      body: JSON.stringify({ feedbackId: id, status }),
+    });
 
-      const existing = getLocalStoredInvitations();
-      const updated = existing.map(i => i.code === code ? { ...i, status: 'revoked' as const } : i);
-      saveLocalStoredInvitations(updated);
-
-      if (onShowToast) onShowToast(`Invitation ${code} revoked.`, 'info');
-      loadAllData();
-    } catch (err: any) {
-      if (onShowToast) onShowToast(err.message, 'warning');
-    }
+    setFeedbackList((prev) =>
+      prev.map((f) => (f.id === id ? { ...f, status } : f))
+    );
   };
 
-  const handleApproveRequest = async (requestId: string, reqName: string, reqBiz: string) => {
-    try {
-      // Create invitation for this approved merchant
-      const inviteData = await safeFetchJson('/api/admin/invitations/create', {
-        method: 'POST',
-        body: JSON.stringify({
-          notes: `Approved for ${reqName} (${reqBiz})`,
-          maxUses: 1,
-        }),
-      });
+  // Approve waitlist request handler
+  const handleApproveAccessRequest = async (request: BetaAccessRequest): Promise<void> => {
+    // 1. Generate invitation
+    const inv = await handleCreateInvitation({
+      notes: `Approved for ${request.businessName} (${request.fullName})`,
+      maxUses: 1,
+    });
 
-      if (inviteData?.success) {
-        if (onShowToast) onShowToast(`Approved ${reqName}! Generated code: ${inviteData.invitation.code}`, 'success');
-        loadAllData();
-      }
-    } catch (err: any) {
-      if (onShowToast) onShowToast(err.message, 'warning');
-    }
+    // 2. Mark request approved
+    await safeFetchJson('/api/admin/access-requests/status', {
+      method: 'POST',
+      body: JSON.stringify({ requestId: request.id, status: 'approved' }),
+    });
+
+    setAccessRequests((prev) =>
+      prev.map((r) => (r.id === request.id ? { ...r, status: 'approved' } : r))
+    );
   };
 
-  const handleSetUserStatus = async (userId: string, status: 'active' | 'suspended' | 'revoked') => {
-    try {
-      const data = await safeFetchJson('/api/admin/users/status', {
-        method: 'POST',
-        body: JSON.stringify({ userId, status }),
-      });
-      if (data?.success) {
-        if (onShowToast) onShowToast(`User status updated to ${status}.`, 'info');
-        loadAllData();
-      }
-    } catch (err: any) {
-      if (onShowToast) onShowToast(err.message, 'warning');
-    }
-  };
-
-  const handleCopyCode = (code: string) => {
-    navigator.clipboard.writeText(code);
-    setCopiedCode(code);
-    setTimeout(() => setCopiedCode(null), 2500);
-    if (onShowToast) onShowToast(`Copied code: ${code}`, 'success');
-  };
-
-  const pendingRequests = accessRequests.filter((r) => r.status === 'pending');
-  const openFeedback = feedbackList.filter((f) => f.status === 'open');
+  // Badges
+  const openFeedbackCount = feedbackList.filter((f) => (f.status || 'open') === 'open').length;
+  const pendingRequestsCount = accessRequests.filter((r) => r.status === 'pending').length;
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
-      {/* Top Banner: Founder Welcome & Header */}
-      <div className="p-6 rounded-3xl bg-gradient-to-r from-purple-900 via-indigo-950 to-slate-900 text-white shadow-xl border border-purple-500/20 relative overflow-hidden">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
-          <div className="flex items-center space-x-3.5">
-            <div className="w-12 h-12 rounded-2xl bg-purple-600/30 border border-purple-400/40 flex items-center justify-center text-purple-300">
-              <ShieldCheck className="w-7 h-7" />
+    <div className="min-h-screen bg-[#060911] text-slate-100 flex font-sans selection:bg-emerald-900 selection:text-white">
+      {/* 1. Primary Left Sidebar */}
+      <AdminSidebar
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        onExitAdmin={onExitAdmin || (() => onNavigateTab && onNavigateTab('dashboard'))}
+        openFeedbackCount={openFeedbackCount}
+        pendingRequestsCount={pendingRequestsCount}
+        isOpenMobile={isMobileMenuOpen}
+        onCloseMobile={() => setIsMobileMenuOpen(false)}
+        founderEmail={FOUNDER_EMAIL}
+      />
+
+      {/* 2. Main Content Wrapper */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top Header */}
+        <AdminHeader
+          title={
+            activeTab === 'overview'
+              ? 'Karra Overview'
+              : activeTab === 'users'
+              ? 'Merchant Accounts'
+              : activeTab === 'activity'
+              ? 'Live Activity Log'
+              : activeTab === 'analytics'
+              ? 'Product Analytics'
+              : activeTab === 'feedback'
+              ? 'User Problem Reports'
+              : activeTab === 'beta'
+              ? 'Beta Management'
+              : 'Admin Settings'
+          }
+          subtitle={
+            activeTab === 'overview'
+              ? 'Understand how businesses are using Karra.'
+              : activeTab === 'users'
+              ? 'Inspect and manage registered merchant businesses.'
+              : activeTab === 'activity'
+              ? 'Stream of real-time merchant events and actions.'
+              : activeTab === 'analytics'
+              ? 'Acquisition trend, activation funnel, and feature adoption.'
+              : activeTab === 'feedback'
+              ? 'Direct feedback and bug reports from active merchants.'
+              : activeTab === 'beta'
+              ? 'Issue invitation codes and approve waitlist requests.'
+              : 'Founder account credentials, system diagnostics, and raw data export.'
+          }
+          dateRange={dateRange}
+          onDateRangeChange={setDateRange}
+          customStartDate={customStartDate}
+          customEndDate={customEndDate}
+          onCustomDatesChange={(start, end) => {
+            setCustomStartDate(start);
+            setCustomEndDate(end);
+          }}
+          onRefresh={() => loadAllData(true)}
+          isRefreshing={isRefreshing}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+          onSignOut={onUnauthorized || (() => {})}
+          lastUpdated={lastRefreshedAt}
+        />
+
+        {/* Viewport Content */}
+        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl w-full mx-auto">
+          {isLoading ? (
+            <div className="py-24 text-center space-y-3">
+              <div className="w-10 h-10 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin mx-auto" />
+              <p className="text-xs font-semibold text-slate-400">Loading Karra Command Center...</p>
             </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight">
-                  Karra Founder Admin Dashboard
-                </h1>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-500/30 border border-purple-400/50 text-purple-200 uppercase tracking-wider">
-                  Founder Portal
-                </span>
-              </div>
-              <p className="text-xs sm:text-sm text-purple-200/80 mt-0.5">
-                Full governance over merchant invitations, access gates, beta testers, and user feedback.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-2.5">
-            <button
-              onClick={loadAllData}
-              disabled={isLoading}
-              className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-white/10 hover:bg-white/20 border border-white/15 text-white transition-all cursor-pointer active:scale-95"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-              <span>Refresh</span>
-            </button>
-            {onNavigateTab && (
-              <button
-                onClick={() => onNavigateTab('dashboard')}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-white text-slate-900 hover:bg-slate-100 transition-all cursor-pointer active:scale-95 shadow-sm"
-              >
-                <span>Back to Store Ledger</span>
-                <ArrowRight className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Live Metrics Row */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6 pt-5 border-t border-white/10">
-          <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10">
-            <span className="text-[10px] uppercase font-bold text-purple-200/70 tracking-wider">Total Invitations</span>
-            <p className="text-xl sm:text-2xl font-extrabold text-white mt-0.5">
-              {analytics?.totalInvitations ?? invitations.length}
-            </p>
-            <span className="text-[10px] text-emerald-300 font-semibold">
-              {analytics?.activeInvitations ?? invitations.filter(i => i.status === 'active').length} active codes
-            </span>
-          </div>
-
-          <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10">
-            <span className="text-[10px] uppercase font-bold text-purple-200/70 tracking-wider">Registered Merchants</span>
-            <p className="text-xl sm:text-2xl font-extrabold text-white mt-0.5">
-              {analytics?.totalBetaUsers ?? users.length}
-            </p>
-            <span className="text-[10px] text-purple-200 font-semibold">
-              {users.filter(u => u.betaStatus === 'active').length} active stores
-            </span>
-          </div>
-
-          <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10">
-            <span className="text-[10px] uppercase font-bold text-purple-200/70 tracking-wider">Access Requests</span>
-            <p className="text-xl sm:text-2xl font-extrabold text-white mt-0.5">
-              {accessRequests.length}
-            </p>
-            <span className="text-[10px] text-amber-300 font-semibold">
-              {pendingRequests.length} pending review
-            </span>
-          </div>
-
-          <div className="bg-white/5 rounded-2xl p-3.5 border border-white/10">
-            <span className="text-[10px] uppercase font-bold text-purple-200/70 tracking-wider">Feedback Submissions</span>
-            <p className="text-xl sm:text-2xl font-extrabold text-white mt-0.5">
-              {feedbackList.length}
-            </p>
-            <span className="text-[10px] text-emerald-300 font-semibold">
-              {openFeedback.length} open issues
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {/* Admin Subtabs Navigation */}
-      <div className="flex border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] rounded-2xl px-3 py-1 shadow-xs overflow-x-auto gap-1">
-        <button
-          onClick={() => setActiveSubTab('overview')}
-          className={`flex items-center space-x-2 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeSubTab === 'overview'
-              ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 shadow-2xs'
-              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-          }`}
-        >
-          <BarChart3 className="w-4 h-4" />
-          <span>Overview</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('invitations')}
-          className={`flex items-center space-x-2 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeSubTab === 'invitations'
-              ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 shadow-2xs'
-              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-          }`}
-        >
-          <Key className="w-4 h-4" />
-          <span>Invitation Codes ({invitations.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('requests')}
-          className={`flex items-center space-x-2 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeSubTab === 'requests'
-              ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 shadow-2xs'
-              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>Access Requests ({pendingRequests.length} Pending)</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('users')}
-          className={`flex items-center space-x-2 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeSubTab === 'users'
-              ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 shadow-2xs'
-              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-          }`}
-        >
-          <Building2 className="w-4 h-4" />
-          <span>Registered Stores ({users.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveSubTab('feedback')}
-          className={`flex items-center space-x-2 py-2.5 px-4 rounded-xl text-xs font-bold transition-all cursor-pointer ${
-            activeSubTab === 'feedback'
-              ? 'bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 shadow-2xs'
-              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-          }`}
-        >
-          <MessageSquare className="w-4 h-4" />
-          <span>Merchant Feedback ({feedbackList.length})</span>
-        </button>
-      </div>
-
-      {/* =========================================================================
-          TAB 1: OVERVIEW & QUICK GENERATOR
-         ========================================================================= */}
-      {activeSubTab === 'overview' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column: Quick Code Generator */}
-          <div className="lg:col-span-5 bg-white dark:bg-[#111827] rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-5">
-            <div>
-              <div className="flex items-center space-x-2 text-xs font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400 mb-1">
-                <Plus className="w-4 h-4" />
-                <span>Quick Code Generator</span>
-              </div>
-              <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                Generate Beta Invitation Pass
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Create a single or multi-use invitation pass for VIP merchants or partners.
-              </p>
-            </div>
-
-            <form onSubmit={handleCreateInvitation} className="space-y-4">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                  Recipient / Merchant Notes
-                </label>
-                <input
-                  type="text"
-                  value={newNotes}
-                  onChange={(e) => setNewNotes(e.target.value)}
-                  placeholder="e.g. VIP Merchant: Alhaji Musa (Alaba)"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#161F2E] text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-purple-500 outline-none"
+          ) : (
+            <>
+              {activeTab === 'overview' && (
+                <AdminOverviewTab
+                  users={users}
+                  events={events}
+                  dailyActivity={dailyActivity}
+                  dateRangeLabel={dateRangeLabel}
+                  onSelectUser={(u) => setSelectedUser(u)}
+                  onNavigateTab={(t) => setActiveTab(t as AdminTab)}
+                  filterStartDate={filterStartDate}
+                  filterEndDate={filterEndDate}
+                  comparisonStats={comparisonStats}
                 />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Max Uses
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="100"
-                    value={newMaxUses}
-                    onChange={(e) => setNewMaxUses(Number(e.target.value))}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#161F2E] text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-purple-500 outline-none font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Expires In (Days)
-                  </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="365"
-                    value={newExpiryDays}
-                    onChange={(e) => setNewExpiryDays(e.target.value ? Number(e.target.value) : '')}
-                    placeholder="Never"
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-[#161F2E] text-slate-900 dark:text-white text-xs focus:ring-2 focus:ring-purple-500 outline-none font-mono"
-                  />
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={isCreatingInvite}
-                className="w-full py-3 rounded-xl bg-purple-700 hover:bg-purple-800 text-white font-bold text-xs shadow-md transition-all cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50"
-              >
-                <Plus className="w-4 h-4" />
-                <span>{isCreatingInvite ? 'Generating Code...' : 'Generate Invitation Code'}</span>
-              </button>
-            </form>
-
-            <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 space-y-1">
-              <div className="flex items-center space-x-1.5 text-emerald-600 dark:text-emerald-400 font-semibold">
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Codes format: KARRA-XXXX-XXXX (Auto-encrypted)</span>
-              </div>
-              <p>Direct code entry automatically unlocks store registration.</p>
-            </div>
-          </div>
-
-          {/* Right Column: Pending Access Requests & Recent Activity */}
-          <div className="lg:col-span-7 space-y-6">
-            {/* Pending Requests Box */}
-            <div className="bg-white dark:bg-[#111827] rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                    Pending Beta Applications ({pendingRequests.length})
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Merchants who requested access from the landing page.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setActiveSubTab('requests')}
-                  className="text-xs font-bold text-purple-600 dark:text-purple-400 hover:underline"
-                >
-                  View All &rarr;
-                </button>
-              </div>
-
-              {pendingRequests.length === 0 ? (
-                <div className="p-8 text-center bg-slate-50 dark:bg-slate-900/60 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
-                  <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300">All caught up!</p>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    No pending beta access requests awaiting approval.
-                  </p>
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100 dark:divide-slate-800 space-y-3">
-                  {pendingRequests.slice(0, 3).map((req) => (
-                    <div key={req.id} className="pt-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div>
-                        <div className="flex items-center space-x-2">
-                          <span className="font-extrabold text-xs text-slate-900 dark:text-white">{req.fullName}</span>
-                          <span className="text-[11px] font-semibold text-purple-600 dark:text-purple-400">&bull; {req.businessName}</span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center space-x-3 mt-0.5">
-                          <span>{req.phone}</span>
-                          <span>{req.email}</span>
-                        </div>
-                        {req.notes && (
-                          <p className="text-[11px] text-slate-600 dark:text-slate-400 italic mt-1 bg-slate-50 dark:bg-slate-800/60 p-2 rounded-lg">
-                            &ldquo;{req.notes}&rdquo;
-                          </p>
-                        )}
-                      </div>
-
-                      <button
-                        onClick={() => handleApproveRequest(req.id, req.fullName, req.businessName)}
-                        className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-xs cursor-pointer shrink-0 self-start sm:self-auto"
-                      >
-                        <Check className="w-3.5 h-3.5" />
-                        <span>Approve & Issue Code</span>
-                      </button>
-                    </div>
-                  ))}
-                </div>
               )}
-            </div>
 
-            {/* Active Invitations Snapshot */}
-            <div className="bg-white dark:bg-[#111827] rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h2 className="text-base font-extrabold text-slate-900 dark:text-white">
-                    Active Invitation Codes
-                  </h2>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Live passes ready for merchant registration.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setActiveSubTab('invitations')}
-                  className="text-xs font-bold text-purple-600 dark:text-purple-400 hover:underline"
-                >
-                  Manage All &rarr;
-                </button>
-              </div>
+              {activeTab === 'users' && (
+                <AdminUsersTab
+                  users={users}
+                  onSelectUser={(u) => setSelectedUser(u)}
+                  onRefresh={() => loadAllData(true)}
+                />
+              )}
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {invitations.slice(0, 4).map((inv) => (
-                  <div
-                    key={inv.code}
-                    className="p-3.5 rounded-2xl bg-slate-50 dark:bg-[#161F2E] border border-slate-200 dark:border-slate-700/80 flex items-center justify-between"
-                  >
-                    <div>
-                      <span className="font-mono font-extrabold text-xs text-slate-900 dark:text-white tracking-wider block">
-                        {inv.code}
-                      </span>
-                      <span className="text-[10px] text-slate-500 dark:text-slate-400">
-                        {inv.notes || 'General Pass'} &bull; {inv.currentUses}/{inv.maxUses} used
-                      </span>
-                    </div>
+              {activeTab === 'activity' && (
+                <AdminActivityTab
+                  events={events}
+                  users={users}
+                  onSelectUser={(u) => setSelectedUser(u)}
+                />
+              )}
 
-                    <button
-                      onClick={() => handleCopyCode(inv.code)}
-                      className="p-2 rounded-xl text-slate-500 hover:text-purple-600 dark:hover:text-purple-400 hover:bg-white dark:hover:bg-slate-800 transition-colors"
-                      title="Copy code"
-                    >
-                      {copiedCode === inv.code ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+              {activeTab === 'analytics' && (
+                <AdminAnalyticsTab
+                  users={users}
+                  events={events}
+                  dailyActivity={dailyActivity}
+                  dateRangeLabel={dateRangeLabel}
+                />
+              )}
 
-      {/* =========================================================================
-          TAB 2: INVITATION CODES MANAGER
-         ========================================================================= */}
-      {activeSubTab === 'invitations' && (
-        <div className="bg-white dark:bg-[#111827] rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
-            <div>
-              <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                All Invitation Codes ({invitations.length})
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Generate, copy, monitor, or revoke private beta invitation passes.
-              </p>
-            </div>
-            <button
-              onClick={() => setActiveSubTab('overview')}
-              className="inline-flex items-center space-x-1.5 px-3 py-2 rounded-xl bg-purple-700 hover:bg-purple-800 text-white text-xs font-bold cursor-pointer"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Create New Pass</span>
-            </button>
-          </div>
+              {activeTab === 'feedback' && (
+                <AdminFeedbackTab
+                  feedbackList={feedbackList}
+                  onUpdateFeedbackStatus={handleUpdateFeedbackStatus}
+                  onShowToast={onShowToast}
+                />
+              )}
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-500 dark:text-slate-400 font-bold uppercase text-[10px] tracking-wider">
-                <tr>
-                  <th className="py-3 px-4 rounded-l-xl">Invitation Code</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Uses</th>
-                  <th className="py-3 px-4">Notes / Assigned To</th>
-                  <th className="py-3 px-4">Created Date</th>
-                  <th className="py-3 px-4 rounded-r-xl text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                {invitations.map((inv) => (
-                  <tr key={inv.code} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30 transition-colors">
-                    <td className="py-3.5 px-4 font-mono font-bold text-slate-900 dark:text-white">
-                      {inv.code}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        inv.status === 'active'
-                          ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
-                          : inv.status === 'redeemed'
-                          ? 'bg-blue-100 dark:bg-blue-950 text-blue-800 dark:text-blue-300'
-                          : 'bg-red-100 dark:bg-red-950 text-red-800 dark:text-red-300'
-                      }`}>
-                        {inv.status}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 font-mono">
-                      {inv.currentUses} / {inv.maxUses}
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
-                      {inv.notes || '—'}
-                    </td>
-                    <td className="py-3.5 px-4 text-slate-500 font-mono text-[11px]">
-                      {new Date(inv.createdAt).toLocaleDateString()}
-                    </td>
-                    <td className="py-3.5 px-4 text-right space-x-2">
-                      <button
-                        onClick={() => handleCopyCode(inv.code)}
-                        className="p-1.5 rounded-lg text-slate-500 hover:text-purple-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                        title="Copy Code"
-                      >
-                        {copiedCode === inv.code ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
-                      </button>
-                      {inv.status === 'active' && (
-                        <button
-                          onClick={() => handleRevokeInvitation(inv.code)}
-                          className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 cursor-pointer"
-                          title="Revoke Code"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+              {activeTab === 'beta' && (
+                <AdminBetaTab
+                  invitations={invitations}
+                  accessRequests={accessRequests}
+                  onCreateInvitation={handleCreateInvitation}
+                  onRevokeInvitation={handleRevokeInvitation}
+                  onApproveAccessRequest={handleApproveAccessRequest}
+                  onShowToast={onShowToast}
+                />
+              )}
 
-      {/* =========================================================================
-          TAB 3: ACCESS REQUESTS (From Landing Page)
-         ========================================================================= */}
-      {activeSubTab === 'requests' && (
-        <div className="bg-white dark:bg-[#111827] rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-          <div>
-            <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-              Merchant Beta Applications ({accessRequests.length})
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Review and approve incoming access requests submitted via the landing page.
-            </p>
-          </div>
+              {activeTab === 'settings' && (
+                <AdminSettingsTab
+                  founderEmail={FOUNDER_EMAIL}
+                  users={users}
+                  events={events}
+                  feedbackList={feedbackList}
+                  invitations={invitations}
+                  onExitAdmin={onExitAdmin || (() => onNavigateTab && onNavigateTab('dashboard'))}
+                  onShowToast={onShowToast}
+                />
+              )}
+            </>
+          )}
+        </main>
+      </div>
 
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {accessRequests.map((req) => (
-              <div key={req.id} className="py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="space-y-1">
-                  <div className="flex items-center space-x-2">
-                    <span className="font-extrabold text-sm text-slate-900 dark:text-white">{req.fullName}</span>
-                    <span className="text-xs font-bold text-purple-600 dark:text-purple-400">&bull; {req.businessName}</span>
-                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                      req.status === 'pending'
-                        ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-300'
-                        : 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
-                    }`}>
-                      {req.status}
-                    </span>
-                  </div>
-                  <div className="flex items-center space-x-4 text-xs text-slate-500">
-                    <span className="flex items-center space-x-1">
-                      <Phone className="w-3.5 h-3.5" />
-                      <span>{req.phone}</span>
-                    </span>
-                    <span className="flex items-center space-x-1">
-                      <Mail className="w-3.5 h-3.5" />
-                      <span>{req.email}</span>
-                    </span>
-                    <span>Applied: {new Date(req.createdAt).toLocaleDateString()}</span>
-                  </div>
-                  {req.notes && (
-                    <p className="text-xs text-slate-600 dark:text-slate-300 bg-slate-50 dark:bg-slate-900 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800">
-                      &ldquo;{req.notes}&rdquo;
-                    </p>
-                  )}
-                </div>
-
-                {req.status === 'pending' && (
-                  <button
-                    onClick={() => handleApproveRequest(req.id, req.fullName, req.businessName)}
-                    className="inline-flex items-center space-x-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold cursor-pointer shrink-0 shadow-sm"
-                  >
-                    <Check className="w-4 h-4" />
-                    <span>Approve & Issue Code</span>
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* =========================================================================
-          TAB 4: REGISTERED USERS
-         ========================================================================= */}
-      {activeSubTab === 'users' && (
-        <div className="bg-white dark:bg-[#111827] rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-          <div>
-            <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-              Registered Merchant Stores ({users.length})
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Manage merchant account access, roles, and suspension states.
-            </p>
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 dark:bg-slate-900/60 text-slate-500 dark:text-slate-400 font-bold uppercase text-[10px] tracking-wider">
-                <tr>
-                  <th className="py-3 px-4 rounded-l-xl">Merchant Name & Store</th>
-                  <th className="py-3 px-4">Email</th>
-                  <th className="py-3 px-4">Role</th>
-                  <th className="py-3 px-4">Beta Status</th>
-                  <th className="py-3 px-4">Invitation Used</th>
-                  <th className="py-3 px-4 rounded-r-xl text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
-                {users.map((u) => (
-                  <tr key={u.userId} className="hover:bg-slate-50/50 dark:hover:bg-slate-900/30">
-                    <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
-                      <div>{u.businessName || 'My Business'}</div>
-                      <span className="text-[10px] text-slate-400 font-normal">ID: {u.userId.slice(0, 8)}...</span>
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-700 dark:text-slate-300">
-                      {u.email}
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        u.role === 'admin'
-                          ? 'bg-purple-100 dark:bg-purple-950 text-purple-800 dark:text-purple-300'
-                          : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-                      }`}>
-                        {u.role || 'merchant'}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
-                        u.betaStatus === 'active'
-                          ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300'
-                          : 'bg-red-100 dark:bg-red-950 text-red-800 dark:text-red-300'
-                      }`}>
-                        {u.betaStatus || 'active'}
-                      </span>
-                    </td>
-                    <td className="py-3.5 px-4 font-mono text-slate-500">
-                      {u.betaInvitationCode || 'Direct'}
-                    </td>
-                    <td className="py-3.5 px-4 text-right">
-                      {u.role !== 'admin' && (
-                        u.betaStatus === 'active' ? (
-                          <button
-                            onClick={() => handleSetUserStatus(u.userId, 'suspended')}
-                            className="text-red-600 hover:underline text-[11px] font-bold cursor-pointer"
-                          >
-                            Suspend Access
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleSetUserStatus(u.userId, 'active')}
-                            className="text-emerald-600 hover:underline text-[11px] font-bold cursor-pointer"
-                          >
-                            Reactivate Access
-                          </button>
-                        )
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* =========================================================================
-          TAB 5: MERCHANT FEEDBACK
-         ========================================================================= */}
-      {activeSubTab === 'feedback' && (
-        <div className="bg-white dark:bg-[#111827] rounded-3xl p-6 border border-slate-200 dark:border-slate-800 shadow-sm space-y-6">
-          <div>
-            <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-              Merchant Feedback & Suggestions ({feedbackList.length})
-            </h2>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Bug reports and feedback collected via the floating feedback balloon.
-            </p>
-          </div>
-
-          <div className="divide-y divide-slate-100 dark:divide-slate-800">
-            {feedbackList.map((item) => (
-              <div key={item.id} className="py-4 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <span className="font-extrabold text-xs text-slate-900 dark:text-white">{item.businessName}</span>
-                    <span className="text-[11px] text-slate-500">&bull; {item.userEmail}</span>
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300">
-                      {item.type}
-                    </span>
-                  </div>
-                  <span className="text-[11px] font-mono text-slate-400">
-                    {new Date(item.createdAt).toLocaleString()}
-                  </span>
-                </div>
-
-                <p className="text-xs sm:text-sm text-slate-800 dark:text-slate-200 bg-slate-50 dark:bg-slate-900 p-3 rounded-xl border border-slate-200/60 dark:border-slate-800 leading-relaxed">
-                  &ldquo;{item.message}&rdquo;
-                </p>
-
-                {item.context && (
-                  <div className="text-[10px] text-slate-400 font-mono flex items-center space-x-3">
-                    <span>Tab: {item.context.tab || 'General'}</span>
-                    <span>Device: {item.context.device || 'Web'}</span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+      {/* Individual Business Detail Modal */}
+      {selectedUser && (
+        <AdminBusinessDetailModal
+          user={selectedUser}
+          events={events}
+          feedbackList={feedbackList}
+          onClose={() => setSelectedUser(null)}
+          onUpdateStatus={handleUpdateUserStatus}
+          onShowToast={onShowToast}
+        />
       )}
     </div>
   );

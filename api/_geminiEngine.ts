@@ -12,7 +12,7 @@ export async function generateContentWithRetryAndFallback(
   }
 ) {
   // Candidate models compliant with system skills guideline (fast, resilient models prioritized)
-  const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest'];
+  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
   let lastError: any = null;
 
   // Enforce low temperature for deterministic reasoning and zero hallucination
@@ -28,7 +28,7 @@ export async function generateContentWithRetryAndFallback(
       try {
         let timer: NodeJS.Timeout;
         const timeoutPromise = new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error(`Model ${model} timed out after 6000ms`)), 6000);
+          timer = setTimeout(() => reject(new Error(`Model ${model} timed out after 9000ms`)), 9000);
         });
 
         const generatePromise = ai.models.generateContent({
@@ -262,12 +262,15 @@ CRITICAL DIRECTIVES:
      * Set requiresClarification to true, put the question in "answer", and set structuredAction to null and recordedEvent to null!
 
 4. QUESTION VS ACTION EXECUTION:
-   - When the merchant is simply asking an informational question ("How much did I make today?", "Who owes me money?", "What is my profit?", "What did Indomie cost me?"):
-     * structuredAction MUST be null or intent "RETRIEVAL_ONLY"
-     * recordedEvent MUST be null
-     * correctedEvent MUST be null
-     * NEVER create or log a transaction for an informational question!
-   - When the user asks to record, correct, or delete something and provides all necessary information, output a "structuredAction".
+   - When the merchant is simply asking an informational question ("How much did I make today?", "Who owes me money?", "What is my profit?", "What did Indomie cost me?", "Can I afford another freezer?"):
+     * structuredAction MUST be null.
+     * NEVER output a structuredAction for questions or inquiries!
+   - When the user explicitly asks to record a sale, expense, payment, debt, or correction, output a clean "structuredAction":
+     * Example: "I sold 2 dresses for ₦40,000" -> structuredAction: { "intent": "CREATE_SALE", "productOrServiceName": "Dress", "quantity": 2, "unitPrice": 20000, "totalAmount": 40000, "cashReceived": 40000 }
+     * Example: "Alhaji bought 2 shirts, paid #68000, owing me #12000" -> structuredAction: { "intent": "CREATE_SALE", "productOrServiceName": "Shirts", "quantity": 2, "unitPrice": 40000, "totalAmount": 80000, "cashReceived": 68000, "outstandingBalance": 12000, "customerName": "Alhaji" }, memories: [{ "type": "CUSTOMER_DEBT", "targetName": "Alhaji", "summary": "Alhaji owes ₦12,000 balance", "data": { "customerName": "Alhaji", "amount": 12000 } }]
+     * Example: "Bought fuel for 5,000" -> structuredAction: { "intent": "RECORD_EXPENSE", "expenseCategory": "Utilities", "totalAmount": 5000, "rawUserText": "Bought fuel for 5,000" }
+     * Example: "Chuks paid 20k" -> structuredAction: { "intent": "RECORD_PAYMENT", "customerName": "Chuks", "totalAmount": 20000, "cashReceived": 20000 }
+     * Example: "Delete the last transaction" -> structuredAction: { "intent": "DELETE_EVENT" }
    - SUBJECT RULE:
      * "I bought...", "Bought...", "We bought..." (Merchant spending money): ALWAYS an OUTFLOW ("RECORD_EXPENSE" or "RECORD_PURCHASE"), NEVER "CREATE_SALE"!
      * "David bought...", "Customer bought...", "I sold...": ALWAYS "CREATE_SALE"!
@@ -275,10 +278,10 @@ CRITICAL DIRECTIVES:
 5. CUSTOMER PROMISES, INTENTIONS & FUTURE NOTES:
    - When the user shares customer plans, future intentions, or payment promises (e.g. "Fola wants to make another cloth, but she promised to pay me next month", "David said he will pay next week", "Chuks promised 20k on Friday"):
      * THIS IS A CUSTOMER NOTE / REMINDER, NEVER A COMPLETED SALE!
-     * NEVER create a sale with ₦0 or log anything into the sales ledger!
+     * NEVER create a sale or log anything into the sales ledger!
      * Acknowledge warmly: "Noted! I have recorded this note for [Customer]: '[Statement]'. This is saved in your customer notes and will not affect your daily ledger until a payment or deposit is received."
      * Output a memory item: { "type": "CUSTOMER_UPDATE", "targetName": "[Customer]", "summary": "Note: [Statement]" }
-     * Set structuredAction to null and recordedEvent to null!
+     * Set structuredAction to null!
 
 6. OBJECTIONS & UNDO REQUESTS:
    - When the user objects to an accidental record ("I didn't ask you to add it to the ledger", "Why did you add that to the ledger?", "Don't add that", "Undo that"):
@@ -287,10 +290,10 @@ CRITICAL DIRECTIVES:
 
 7. DEBTOR INQUIRIES & TYPO RESILIENCE:
    - Phrases like "Who are those owing me money?", "Who owes me money?", "Who is owing me?", "Who are those owning me?", "Who has not paid?":
-     * These are questions asking for a list of debtors.
      * Check "Customers & Debts" data where outstandingBalance > 0.
-     * List all debtors with their names and amounts owed.
-     * NEVER ask "How much is [Name] owing you?" in response to a debtor query! Directly answer who owes!
+     * List all debtors with their names and amounts owed (e.g. "Chuks owes ₦80,000, Emeka owes ₦6,000. Total outstanding debt: ₦86,000").
+     * If no one owes, state: "Currently, no customers are owing you money."
+     * structuredAction MUST be null.
 
 8. GREETINGS, CAPABILITIES, AND GENERAL HELP:
    - When the owner greets you ("hello", "hi", "good morning", "good afternoon", "how far", "kedu"):
@@ -325,8 +328,6 @@ Respond in structured JSON format with this exact schema:
   "targetDescription": null,
   "requiresClarification": false,
   "structuredAction": null,
-  "memories": [],
-  "recordedEvent": null,
-  "correctedEvent": null
+  "memories": []
 }`;
 }

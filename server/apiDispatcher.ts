@@ -22,6 +22,9 @@ import {
   listRequests,
   getBetaAnalytics,
   checkRateLimit,
+  listEvents,
+  updateFeedbackStatus,
+  updateRequestStatus,
 } from './betaStore';
 
 export { FOUNDER_EMAIL };
@@ -412,12 +415,46 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
       return sendJson(res, 200, { feedback: listFeedback() });
     }
 
+    if (targetPath === 'admin/feedback/status') {
+      if (!verifyAdminRequest(req)) {
+        return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
+      }
+      const { feedbackId, status } = req.body || {};
+      if (!feedbackId || !['open', 'reviewed', 'resolved'].includes(status)) {
+        return sendJson(res, 400, { error: 'Valid feedbackId and status (open, reviewed, resolved) are required.' });
+      }
+      const ok = updateFeedbackStatus(feedbackId, status);
+      return sendJson(res, 200, { success: ok });
+    }
+
     // G. Admin Access Requests
     if (targetPath === 'admin/access-requests' || targetPath === 'admin/requests') {
       if (!verifyAdminRequest(req)) {
         return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
       }
       return sendJson(res, 200, { requests: listRequests() });
+    }
+
+    if (targetPath === 'admin/access-requests/status') {
+      if (!verifyAdminRequest(req)) {
+        return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
+      }
+      const { requestId, status } = req.body || {};
+      if (!requestId || !['pending', 'approved', 'rejected'].includes(status)) {
+        return sendJson(res, 400, { error: 'Valid requestId and status (pending, approved, rejected) are required.' });
+      }
+      const ok = updateRequestStatus(requestId, status);
+      return sendJson(res, 200, { success: ok });
+    }
+
+    // G2. Admin Events
+    if (targetPath === 'admin/events') {
+      if (!verifyAdminRequest(req)) {
+        return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
+      }
+      const limit = Number(req.query?.limit) || 300;
+      const userId = (req.query?.userId as string) || undefined;
+      return sendJson(res, 200, { events: listEvents(limit, userId) });
     }
 
     // H. Admin Analytics
