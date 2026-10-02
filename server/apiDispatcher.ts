@@ -1,4 +1,8 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { initializeApp, getApps } from 'firebase/app';
+import { getFirestore, collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { GoogleGenAI } from '@google/genai';
 import {
   generateContentWithRetryAndFallback,
@@ -56,6 +60,121 @@ export function createAdminSession(email: string): string {
   const token = `karra_tok_${payloadB64}.${signature}`;
   activeAdminSessions.set(token, { email, expiresAt });
   return token;
+}
+
+// Live Firestore admin synchronization
+let cachedFirestoreUsers: any[] = [];
+let cachedFirestoreEvents: any[] = [];
+let lastFirestoreSyncAt = 0;
+
+async function getLiveFirestoreData(): Promise<{ users: any[]; events: any[] }> {
+  const now = Date.now();
+  if (now - lastFirestoreSyncAt < 30000 && cachedFirestoreUsers.length > 0) {
+    return { users: cachedFirestoreUsers, events: cachedFirestoreEvents };
+  }
+
+  try {
+    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+    if (!fs.existsSync(configPath)) {
+      return { users: cachedFirestoreUsers, events: cachedFirestoreEvents };
+    }
+    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+    const app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
+    const db = getFirestore(app, config.firestoreDatabaseId);
+
+    const usersSnap = await getDocs(collection(db, 'users'));
+    const users: any[] = [];
+    const events: any[] = [];
+
+    for (const d of usersSnap.docs) {
+      const prof = d.data();
+      let ledger: any = null;
+      try {
+        const lSnap = await getDoc(doc(db, 'users', d.id, 'data', 'ledger'));
+        if (lSnap.exists()) ledger = lSnap.data();
+      } catch {}
+
+      const userRec = {
+        userId: d.id,
+        email: prof.email || '',
+        businessName: ledger?.businessName || prof.businessName || 'Business Account',
+        ownerName: ledger?.ownerName || prof.displayName || '',
+        joinedAt: prof.createdAt || prof.betaJoinedAt || new Date().toISOString(),
+        lastActiveAt: ledger?.updatedAt || prof.updatedAt || prof.createdAt || new Date().toISOString(),
+        status: prof.betaStatus || 'active',
+        betaStatus: prof.betaStatus || 'active',
+        betaInvitationCode: prof.betaInvitationCode,
+        role: prof.role || 'merchant',
+        transactionCount: ledger?.events?.length || 0,
+        salesCount: (ledger?.events || []).filter((e: any) => e.type === 'SALE').length,
+        expensesCount: (ledger?.events || []).filter((e: any) => e.type === 'EXPENSE').length,
+        stockCount: (ledger?.products || []).length,
+        customersCount: (ledger?.customers || []).length,
+        aiQueryCount: (ledger?.chatHistory || []).length,
+        activeDaysCount: 1,
+      };
+      users.push(userRec);
+
+      // Registration event
+      events.push({
+        id: `reg_${d.id}`,
+        userId: d.id,
+        userEmail: prof.email || '',
+        businessName: userRec.businessName,
+        eventName: 'user_registered',
+        timestamp: userRec.joinedAt,
+        metadata: { betaInvitationCode: prof.betaInvitationCode },
+      });
+
+      // Ledger events
+      if (ledger && Array.isArray(ledger.events)) {
+        for (const lev of ledger.events) {
+          let eventName = 'sale_recorded';
+          if (lev.type === 'EXPENSE') eventName = 'expense_recorded';
+          else if (lev.type === 'DEBT_PAYMENT') eventName = 'debt_recorded';
+          else if (lev.type === 'PURCHASE_STOCK') eventName = 'stock_updated';
+
+          events.push({
+            id: lev.id || `lev_${d.id}_${Math.random().toString(36).slice(2, 7)}`,
+            userId: d.id,
+            userEmail: prof.email || '',
+            businessName: userRec.businessName,
+            eventName,
+            timestamp: lev.timestamp || (lev.date ? `${lev.date}T12:00:00.000Z` : new Date().toISOString()),
+            metadata: {
+              amount: lev.totalRevenue || lev.amount || lev.cashReceived || lev.totalCostAtTime || 0,
+              productName: lev.productName,
+              customerName: lev.customerName,
+              headline: lev.headline || lev.summary,
+            },
+          });
+        }
+      }
+
+      // AI queries
+      if (ledger && Array.isArray(ledger.chatHistory)) {
+        for (const [idx, chat] of ledger.chatHistory.entries()) {
+          events.push({
+            id: `chat_${d.id}_${idx}`,
+            userId: d.id,
+            userEmail: prof.email || '',
+            businessName: userRec.businessName,
+            eventName: 'ai_query',
+            timestamp: chat.timestamp || userRec.lastActiveAt,
+            metadata: { question: chat.text || chat.message || 'AI Assistant Inquiry' },
+          });
+        }
+      }
+    }
+
+    cachedFirestoreUsers = users;
+    cachedFirestoreEvents = events;
+    lastFirestoreSyncAt = now;
+  } catch (err) {
+    console.warn('Live Firestore admin sync error:', err);
+  }
+
+  return { users: cachedFirestoreUsers, events: cachedFirestoreEvents };
 }
 
 export function isValidAdminSession(token: string, email?: string): boolean {
@@ -405,7 +524,12 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
         return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
       }
       if (method === 'GET') {
-        return sendJson(res, 200, { users: listUsers() });
+        const { users: fsUsers } = await getLiveFirestoreData();
+        const localUsers = listUsers();
+        const userMap = new Map();
+        localUsers.forEach((u) => userMap.set(u.userId || u.id, u));
+        fsUsers.forEach((u) => userMap.set(u.userId || u.id, { ...userMap.get(u.userId || u.id), ...u }));
+        return sendJson(res, 200, { users: Array.from(userMap.values()) });
       }
       if (method === 'POST') {
         const { userId, status } = req.body;
@@ -464,9 +588,21 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
       if (!verifyAdminRequest(req)) {
         return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
       }
-      const limit = Number(req.query?.limit) || 300;
+      const limit = Number(req.query?.limit) || 1000;
       const userId = (req.query?.userId as string) || undefined;
-      return sendJson(res, 200, { events: listEvents(limit, userId) });
+      const { events: fsEvents } = await getLiveFirestoreData();
+      const localEvents = listEvents(limit, userId);
+      const evMap = new Map();
+      localEvents.forEach((e) => evMap.set(e.id, e));
+      fsEvents.forEach((e) => {
+        if (!userId || e.userId === userId) {
+          evMap.set(e.id, e);
+        }
+      });
+      const sortedEvents = Array.from(evMap.values()).sort(
+        (a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+      return sendJson(res, 200, { events: sortedEvents.slice(0, limit) });
     }
 
     // H. Admin Analytics
@@ -474,7 +610,18 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
       if (!verifyAdminRequest(req)) {
         return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
       }
-      return sendJson(res, 200, { analytics: getBetaAnalytics() });
+      const { users: fsUsers, events: fsEvents } = await getLiveFirestoreData();
+      const localAnalytics = getBetaAnalytics();
+      const totalSignups = Math.max(localAnalytics.totalBetaUsers || 0, fsUsers.length);
+      const totalEvents = Math.max(localAnalytics.totalEvents, fsEvents.length);
+      return sendJson(res, 200, {
+        analytics: {
+          ...localAnalytics,
+          totalSignups,
+          totalEvents,
+          activeUsers: fsUsers.length,
+        },
+      });
     }
 
     // I. Beta: Validate Code

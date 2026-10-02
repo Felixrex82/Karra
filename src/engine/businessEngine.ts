@@ -21,6 +21,7 @@ export type ActionIntent =
   | 'RECORD_PURCHASE'
   | 'RECORD_PAYMENT'
   | 'RECORD_DEBT'
+  | 'CREATE_CUSTOMER'
   | 'CORRECT_EVENT'
   | 'DELETE_EVENT'
   | 'DELETE_PRODUCT'
@@ -55,6 +56,10 @@ export interface StructuredBusinessAction {
   productOrServiceName?: string;
   itemType?: 'product' | 'service' | 'non_inventory';
   customerName?: string;
+  phone?: string;
+  address?: string;
+  notes?: string;
+  paymentMethod?: string;
   supplierName?: string;
   quantity?: number;
   unit?: string;
@@ -558,7 +563,15 @@ export function executeBusinessAction(
 
         let updatedEvents = [newEvent, ...currentState.events];
         let updatedProducts = [...currentState.products];
-        if (!existingProd && totalRevenue > 0) {
+        if (existingProd) {
+          if (existingProd.currentStock !== undefined) {
+            updatedProducts = updatedProducts.map((p) =>
+              p.id === existingProd.id
+                ? { ...p, currentStock: Math.max(0, (p.currentStock ?? 0) - qty) }
+                : p
+            );
+          }
+        } else if (totalRevenue > 0) {
           updatedProducts.push({
             id: `prod-${Date.now()}`,
             name: itemName,
@@ -766,26 +779,29 @@ export function executeBusinessAction(
           isCorrected: false,
         });
 
-        // Update product cost in memory
+        // Update product cost and stock in memory
         let updatedProducts = [...currentState.products];
         const pIdx = updatedProducts.findIndex((p) => p.name.toLowerCase() === itemName.toLowerCase());
         if (pIdx >= 0) {
           const prev = updatedProducts[pIdx];
+          const newStock = prev.currentStock !== undefined ? prev.currentStock + qty : qty;
           updatedProducts[pIdx] = {
             ...prev,
             previousCost: prev.currentCost,
-            currentCost: unitCost,
+            currentCost: unitCost > 0 ? unitCost : prev.currentCost,
+            currentStock: newStock,
             costHistory: [
               ...(prev.costHistory || []),
-              { date: eventDate, cost: unitCost, reason: `Purchased from ${supName}` },
+              { date: eventDate, cost: unitCost > 0 ? unitCost : prev.currentCost, reason: `Purchased from ${supName}` },
             ],
           };
-        } else if (unitCost > 0) {
+        } else if (unitCost > 0 || qty > 0) {
           updatedProducts.push({
             id: `prod-${Date.now()}`,
             name: itemName,
             unit,
             currentCost: unitCost,
+            currentStock: qty,
             normalSellingPrice: Math.round(unitCost * 1.3),
             costHistory: [{ date: eventDate, cost: unitCost, reason: `Initial stock purchase from ${supName}` }],
             priceHistory: [],
@@ -1227,6 +1243,125 @@ export function executeBusinessAction(
           memoryUpdates: [memoryUpdate],
           auditRecord,
           message: `Permanently deleted ${product.name} from your Business Memory and removed any linked yield conversion rules.`,
+        };
+      }
+
+      case 'CREATE_CUSTOMER': {
+        const custName = (action.customerName || action.targetEntityName || '').trim();
+        if (!custName) {
+          return {
+            success: false,
+            actionId,
+            intent: 'CREATE_CUSTOMER',
+            newState: currentState,
+            error: 'Please enter customer name.',
+            message: 'Please enter customer name.',
+          };
+        }
+
+        let updatedCustomers = [...currentState.customers];
+        const cIdx = updatedCustomers.findIndex(
+          (c) => c.name.toLowerCase() === custName.toLowerCase()
+        );
+        const phone = action.phone || (action as any).customerPhone;
+        const notes = action.notes;
+        const address = action.address || (action as any).customerAddress;
+        const fullNotes = [notes, address ? `Address: ${address}` : null].filter(Boolean).join(' • ');
+        const openingDebt = Math.max(0, action.outstandingBalance || action.totalAmount || 0);
+
+        let createdDebtEvent: BusinessEvent | undefined = undefined;
+        let updatedEvents = [...currentState.events];
+
+        if (openingDebt > 0) {
+          createdDebtEvent = ensureEventHeadlineAndSummary({
+            id: `ev-debt-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            timestamp: new Date().toISOString(),
+            date: eventDate,
+            timeStr: action.timeStr || timeNow,
+            type: 'CUSTOMER_DEBT',
+            rawUserText: action.rawUserText || `Opening balance for ${custName}: owes ${formatNaira(openingDebt)}`,
+            systemResponseText: `Recorded opening balance: ${custName} owes ${formatNaira(openingDebt)}.`,
+            customerName: custName,
+            receivableAdded: openingDebt,
+            isCorrected: false,
+          });
+          updatedEvents = [createdDebtEvent, ...updatedEvents];
+        }
+
+        if (cIdx >= 0) {
+          const existing = updatedCustomers[cIdx];
+          const newOutstanding = (existing.outstandingBalance || 0) + openingDebt;
+          updatedCustomers[cIdx] = {
+            ...existing,
+            phone: phone || existing.phone,
+            notes: fullNotes ? (existing.notes ? `${existing.notes} • ${fullNotes}` : fullNotes) : existing.notes,
+            outstandingBalance: newOutstanding,
+            totalPurchased: (existing.totalPurchased || 0) + openingDebt,
+            lastActivityDate: eventDate,
+            history: [
+              ...(existing.history || []),
+              ...(createdDebtEvent
+                ? [
+                    {
+                      eventId: createdDebtEvent.id,
+                      date: eventDate,
+                      type: 'DEBT' as const,
+                      amount: openingDebt,
+                      description: `Opening balance recorded`,
+                    },
+                  ]
+                : []),
+            ],
+          };
+        } else {
+          updatedCustomers.push({
+            id: `cust-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+            name: custName,
+            phone: phone || undefined,
+            notes: fullNotes || undefined,
+            totalPurchased: openingDebt,
+            totalPaid: 0,
+            outstandingBalance: openingDebt,
+            lastActivityDate: eventDate,
+            paymentReliability: openingDebt > 0 ? 'Medium' : 'High',
+            history: createdDebtEvent
+              ? [
+                  {
+                    eventId: createdDebtEvent.id,
+                    date: eventDate,
+                    type: 'DEBT' as const,
+                    amount: openingDebt,
+                    description: `Opening balance recorded`,
+                  },
+                ]
+              : [],
+          });
+        }
+
+        updatedCustomers = reconcileCustomerBalances(updatedEvents, updatedCustomers);
+
+        const auditRecord: AuditRecord = {
+          timestamp: new Date().toISOString(),
+          action: 'CREATE_CUSTOMER',
+          note: `Added customer ${custName}${openingDebt > 0 ? ` with ${formatNaira(openingDebt)} opening balance` : ''}`,
+        };
+
+        const confirmationMsg = openingDebt > 0
+          ? `${custName} added · ${formatNaira(openingDebt)} opening balance recorded`
+          : `${custName} added to customers.`;
+
+        return {
+          success: true,
+          actionId,
+          intent: 'CREATE_CUSTOMER',
+          newState: {
+            ...currentState,
+            events: updatedEvents,
+            customers: updatedCustomers,
+          },
+          createdEvent: createdDebtEvent,
+          auditRecord,
+          message: confirmationMsg,
         };
       }
 

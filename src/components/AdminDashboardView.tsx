@@ -72,11 +72,11 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Global Date Range State
-  const [dateRange, setDateRange] = useState<AdminDateRange>('7d');
+  // Global Date Range State - Default to 30d so all recent signups and transactions appear immediately
+  const [dateRange, setDateRange] = useState<AdminDateRange>('30d');
   const [customStartDate, setCustomStartDate] = useState<string>(() => {
     const d = new Date();
-    d.setDate(d.getDate() - 7);
+    d.setDate(d.getDate() - 30);
     return d.toISOString().slice(0, 10);
   });
   const [customEndDate, setCustomEndDate] = useState<string>(() => {

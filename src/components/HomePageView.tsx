@@ -41,6 +41,10 @@ interface HomePageViewProps {
   onDeleteEvent?: (id: string) => void;
   observantInsights?: BusinessPulseItem[];
   onSelectInsightAction?: (actionKey: string, item?: BusinessPulseItem) => void;
+  onOpenRecordSale?: () => void;
+  onOpenRecordExpense?: () => void;
+  onOpenAddStock?: () => void;
+  onOpenAddCustomer?: () => void;
 }
 
 export const HomePageView: React.FC<HomePageViewProps> = ({
@@ -56,6 +60,10 @@ export const HomePageView: React.FC<HomePageViewProps> = ({
   onDeleteEvent,
   observantInsights = [],
   onSelectInsightAction,
+  onOpenRecordSale,
+  onOpenRecordExpense,
+  onOpenAddStock,
+  onOpenAddCustomer,
 }) => {
   const [inputText, setInputText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -230,7 +238,7 @@ export const HomePageView: React.FC<HomePageViewProps> = ({
         {/* Record Sale */}
         <button
           type="button"
-          onClick={() => handleActionClick('I sold ')}
+          onClick={() => (onOpenRecordSale ? onOpenRecordSale() : handleActionClick('I sold '))}
           className="bg-white dark:bg-[#0B1522] hover:bg-slate-50 dark:hover:bg-[#0F1E30] border border-slate-200/80 dark:border-[#182B3E] hover:border-emerald-500/50 rounded-2xl p-4 flex flex-col items-center justify-center text-center transition-all cursor-pointer group active:scale-95 shadow-xs hover:shadow-sm"
         >
           <div className="w-12 h-12 sm:w-13 sm:h-13 rounded-2xl bg-[#00B074] flex items-center justify-center shadow-md group-hover:scale-105 transition-transform mb-2.5">
@@ -247,7 +255,7 @@ export const HomePageView: React.FC<HomePageViewProps> = ({
         {/* Record Expense */}
         <button
           type="button"
-          onClick={() => handleActionClick('Spent on ')}
+          onClick={() => (onOpenRecordExpense ? onOpenRecordExpense() : handleActionClick('Spent on '))}
           className="bg-white dark:bg-[#0B1522] hover:bg-slate-50 dark:hover:bg-[#0F1E30] border border-slate-200/80 dark:border-[#182B3E] hover:border-blue-500/50 rounded-2xl p-4 flex flex-col items-center justify-center text-center transition-all cursor-pointer group active:scale-95 shadow-xs hover:shadow-sm"
         >
           <div className="w-12 h-12 sm:w-13 sm:h-13 rounded-2xl bg-[#0284C7] flex items-center justify-center shadow-md group-hover:scale-105 transition-transform mb-2.5">
@@ -261,27 +269,27 @@ export const HomePageView: React.FC<HomePageViewProps> = ({
           </span>
         </button>
 
-        {/* Update Stock */}
+        {/* Add Stock */}
         <button
           type="button"
-          onClick={() => onNavigateToTab('memory')}
+          onClick={() => (onOpenAddStock ? onOpenAddStock() : onNavigateToTab('memory'))}
           className="bg-white dark:bg-[#0B1522] hover:bg-slate-50 dark:hover:bg-[#0F1E30] border border-slate-200/80 dark:border-[#182B3E] hover:border-purple-500/50 rounded-2xl p-4 flex flex-col items-center justify-center text-center transition-all cursor-pointer group active:scale-95 shadow-xs hover:shadow-sm"
         >
           <div className="w-12 h-12 sm:w-13 sm:h-13 rounded-2xl bg-[#8B5CF6] flex items-center justify-center shadow-md group-hover:scale-105 transition-transform mb-2.5">
             <Package className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
           </div>
           <span className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white tracking-tight">
-            Update Stock
+            Add Stock
           </span>
           <span className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Add or reduce stock
+            Receive inventory
           </span>
         </button>
 
         {/* Add Customer */}
         <button
           type="button"
-          onClick={() => handleActionClick('Add customer ')}
+          onClick={() => (onOpenAddCustomer ? onOpenAddCustomer() : handleActionClick('Add customer '))}
           className="bg-white dark:bg-[#0B1522] hover:bg-slate-50 dark:hover:bg-[#0F1E30] border border-slate-200/80 dark:border-[#182B3E] hover:border-amber-500/50 rounded-2xl p-4 flex flex-col items-center justify-center text-center transition-all cursor-pointer group active:scale-95 shadow-xs hover:shadow-sm"
         >
           <div className="w-12 h-12 sm:w-13 sm:h-13 rounded-2xl bg-[#F59E0B] flex items-center justify-center shadow-md group-hover:scale-105 transition-transform mb-2.5">

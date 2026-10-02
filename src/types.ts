@@ -77,7 +77,7 @@ export interface CustomerMemory {
   history: Array<{
     eventId: string;
     date: string;
-    type: 'PURCHASE' | 'PAYMENT' | 'RETURN';
+    type: 'PURCHASE' | 'PAYMENT' | 'RETURN' | 'DEBT';
     amount: number;
     description: string;
   }>;

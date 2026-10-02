@@ -17,6 +17,8 @@ import {
   BusinessProfile,
   NavigationTab,
   ProductMemory,
+  CustomerMemory,
+  ExpenseCategory,
 } from './types';
 import { initialSeedState, createEmptyBusinessState, isSampleSeedData } from './data/seedData';
 import { Header } from './components/Header';
@@ -49,6 +51,12 @@ import { getTodayDateStr, getYesterdayDateStr } from './utils/dateUtils';
 import { Sparkles } from 'lucide-react';
 import { ensureEventHeadlineAndSummary, ensureMemoryHeadlineAndSummary } from './engine/eventSummarizer';
 import { trackAppEvent } from './utils/analyticsTracker';
+import { RecordSaleSheet } from './components/actions/RecordSaleSheet';
+import { RecordExpenseSheet } from './components/actions/RecordExpenseSheet';
+import { AddStockSheet } from './components/actions/AddStockSheet';
+import { AddCustomerSheet } from './components/actions/AddCustomerSheet';
+import { ActionDraftBar, ActionType } from './components/actions/ActionDraftBar';
+import { executeBusinessAction } from './engine/businessEngine';
 
 const getStorageKey = (uid?: string | null): string => {
   if (!uid) return 'kudios_guest_state';
@@ -143,6 +151,11 @@ export default function App() {
   // Beta system modals
   const [isBetaFeedbackOpen, setIsBetaFeedbackOpen] = useState(false);
   const [isBetaOnboardingOpen, setIsBetaOnboardingOpen] = useState(false);
+
+  // Core Structured Business Action Sheets
+  const [activeActionSheet, setActiveActionSheet] = useState<ActionType | null>(null);
+  const [isSheetMinimized, setIsSheetMinimized] = useState<boolean>(false);
+  const [draftSummary, setDraftSummary] = useState<string>('');
 
   // Track mutations made by the user while the ledger is loaded
   useEffect(() => {
@@ -480,6 +493,339 @@ export default function App() {
       showToast('Loaded sample store dataset.', 'info');
     }
   };
+
+  // Structured Core Business Actions (Record Sale, Record Expense, Add Stock, Add Customer)
+  const handleOpenRecordSale = useCallback(() => {
+    setActiveActionSheet('sale');
+    setIsSheetMinimized(false);
+  }, []);
+
+  const handleOpenRecordExpense = useCallback(() => {
+    setActiveActionSheet('expense');
+    setIsSheetMinimized(false);
+  }, []);
+
+  const handleOpenAddStock = useCallback(() => {
+    setActiveActionSheet('stock');
+    setIsSheetMinimized(false);
+  }, []);
+
+  const handleOpenAddCustomer = useCallback(() => {
+    setActiveActionSheet('customer');
+    setIsSheetMinimized(false);
+  }, []);
+
+  const handleCloseActionSheet = useCallback(() => {
+    setActiveActionSheet(null);
+    setIsSheetMinimized(false);
+    setDraftSummary('');
+  }, []);
+
+  const handleMinimizeActionSheet = useCallback(() => {
+    setIsSheetMinimized(true);
+  }, []);
+
+  const handleExpandActionSheet = useCallback(() => {
+    setIsSheetMinimized(false);
+  }, []);
+
+  const handleDiscardActionDraft = useCallback(() => {
+    setActiveActionSheet(null);
+    setIsSheetMinimized(false);
+    setDraftSummary('');
+    showToast('Draft discarded.', 'info');
+  }, []);
+
+  const handleSubmitSale = useCallback(
+    async (params: {
+      itemName: string;
+      quantity: number;
+      unitPrice: number;
+      totalSale: number;
+      customerName?: string;
+      cashReceived: number;
+      receivableAdded: number;
+      paymentMethod: string;
+      date: string;
+      note?: string;
+      unit?: string;
+    }): Promise<boolean> => {
+      try {
+        const result = executeBusinessAction(
+          {
+            intent: 'CREATE_SALE',
+            productOrServiceName: params.itemName,
+            quantity: params.quantity,
+            unitPrice: params.unitPrice,
+            totalAmount: params.totalSale,
+            customerName: params.customerName,
+            cashReceived: params.cashReceived,
+            outstandingBalance: params.receivableAdded,
+            paymentMethod: params.paymentMethod,
+            date: params.date,
+            unit: params.unit,
+            notes: params.note,
+            rawUserText: `Sold ${params.quantity} ${params.unit || 'units'} of ${params.itemName} for ${formatNaira(params.totalSale)}`,
+          },
+          state
+        );
+
+        if (!result.success) {
+          showToast(result.error || result.message || "Couldn't record the sale. Nothing was saved.", 'warning');
+          return false;
+        }
+
+        const newState = result.newState;
+        isDirtyRef.current = true;
+        setState(newState);
+
+        if (user) {
+          const userStorageKey = getStorageKey(user.uid);
+          try {
+            localStorage.setItem(userStorageKey, JSON.stringify(newState));
+          } catch {}
+          if (!user.isAnonymous) {
+            syncLedgerToCloud(newState);
+          }
+        }
+
+        trackAppEvent(
+          'sale_recorded',
+          {
+            itemName: params.itemName,
+            quantity: params.quantity,
+            totalSale: params.totalSale,
+            cashReceived: params.cashReceived,
+            outstanding: params.receivableAdded,
+            customerName: params.customerName,
+          },
+          { businessName: newState.businessName }
+        );
+
+        const paidDesc = formatNaira(params.cashReceived);
+        const saleDesc = formatNaira(params.totalSale);
+        const outDesc =
+          params.receivableAdded > 0
+            ? ` · ${formatNaira(params.receivableAdded)} outstanding`
+            : ' · Fully paid';
+        showToast(`Sale recorded: ${saleDesc} sale · ${paidDesc} received${outDesc}`, 'success');
+        return true;
+      } catch (err: any) {
+        showToast("Couldn't record the sale. Nothing was saved.", 'warning');
+        return false;
+      }
+    },
+    [state, user, syncLedgerToCloud]
+  );
+
+  const handleSubmitExpense = useCallback(
+    async (params: {
+      description: string;
+      amount: number;
+      category: ExpenseCategory;
+      date: string;
+      note?: string;
+    }): Promise<boolean> => {
+      try {
+        const result = executeBusinessAction(
+          {
+            intent: 'RECORD_EXPENSE',
+            productOrServiceName: params.description,
+            totalAmount: params.amount,
+            expenseCategory: params.category,
+            date: params.date,
+            notes: params.note,
+            rawUserText: `Spent ${formatNaira(params.amount)} on ${params.description} (${params.category})`,
+          },
+          state
+        );
+
+        if (!result.success) {
+          showToast(result.error || result.message || "Couldn't record the expense. Nothing was saved.", 'warning');
+          return false;
+        }
+
+        const newState = result.newState;
+        isDirtyRef.current = true;
+        setState(newState);
+
+        if (user) {
+          const userStorageKey = getStorageKey(user.uid);
+          try {
+            localStorage.setItem(userStorageKey, JSON.stringify(newState));
+          } catch {}
+          if (!user.isAnonymous) {
+            syncLedgerToCloud(newState);
+          }
+        }
+
+        trackAppEvent(
+          'expense_recorded',
+          {
+            description: params.description,
+            amount: params.amount,
+            category: params.category,
+          },
+          { businessName: newState.businessName }
+        );
+
+        showToast(
+          `Expense recorded: ${formatNaira(params.amount)} ${params.description.toLowerCase()} expense recorded.`,
+          'success'
+        );
+        return true;
+      } catch (err: any) {
+        showToast("Couldn't record the expense. Nothing was saved.", 'warning');
+        return false;
+      }
+    },
+    [state, user, syncLedgerToCloud]
+  );
+
+  const handleSubmitStock = useCallback(
+    async (params: {
+      itemName: string;
+      quantity: number;
+      unitCost: number;
+      totalCost: number;
+      supplierName?: string;
+      date: string;
+      note?: string;
+      unit?: string;
+    }): Promise<boolean> => {
+      try {
+        const result = executeBusinessAction(
+          {
+            intent: 'RECORD_PURCHASE',
+            productOrServiceName: params.itemName,
+            quantity: params.quantity,
+            unitPrice: params.unitCost,
+            totalAmount: params.totalCost,
+            supplierName: params.supplierName,
+            date: params.date,
+            unit: params.unit,
+            notes: params.note,
+            rawUserText: `Bought ${params.quantity} ${params.unit || 'units'} of ${params.itemName} for ${formatNaira(params.totalCost)}`,
+          },
+          state
+        );
+
+        if (!result.success) {
+          showToast(result.error || result.message || "Couldn't record stock. Nothing was saved.", 'warning');
+          return false;
+        }
+
+        const newState = result.newState;
+        isDirtyRef.current = true;
+        setState(newState);
+
+        if (user) {
+          const userStorageKey = getStorageKey(user.uid);
+          try {
+            localStorage.setItem(userStorageKey, JSON.stringify(newState));
+          } catch {}
+          if (!user.isAnonymous) {
+            syncLedgerToCloud(newState);
+          }
+        }
+
+        trackAppEvent(
+          'stock_updated',
+          {
+            itemName: params.itemName,
+            quantity: params.quantity,
+            unitCost: params.unitCost,
+            totalCost: params.totalCost,
+            supplierName: params.supplierName,
+          },
+          { businessName: newState.businessName }
+        );
+
+        showToast(
+          `Stock added: Added ${params.quantity} ${params.unit || 'units'} of ${params.itemName} · ${formatNaira(params.unitCost)}/${params.unit || 'unit'}`,
+          'success'
+        );
+        return true;
+      } catch (err: any) {
+        showToast("Couldn't record stock. Nothing was saved.", 'warning');
+        return false;
+      }
+    },
+    [state, user, syncLedgerToCloud]
+  );
+
+  const handleSubmitCustomer = useCallback(
+    async (params: {
+      customerName: string;
+      phone?: string;
+      email?: string;
+      address?: string;
+      openingBalance?: number;
+      note?: string;
+    }): Promise<boolean> => {
+      try {
+        const result = executeBusinessAction(
+          {
+            intent: 'CREATE_CUSTOMER',
+            customerName: params.customerName,
+            phone: params.phone,
+            address: params.address,
+            notes: [params.note, params.email ? `Email: ${params.email}` : null].filter(Boolean).join(' • '),
+            outstandingBalance: params.openingBalance || 0,
+            totalAmount: params.openingBalance || 0,
+            rawUserText: `Add customer ${params.customerName}${params.openingBalance ? ` with ${formatNaira(params.openingBalance)} balance` : ''}`,
+          },
+          state
+        );
+
+        if (!result.success) {
+          showToast(result.error || result.message || "Couldn't save customer. Nothing was saved.", 'warning');
+          return false;
+        }
+
+        const newState = result.newState;
+        isDirtyRef.current = true;
+        setState(newState);
+
+        if (user) {
+          const userStorageKey = getStorageKey(user.uid);
+          try {
+            localStorage.setItem(userStorageKey, JSON.stringify(newState));
+          } catch {}
+          if (!user.isAnonymous) {
+            syncLedgerToCloud(newState);
+          }
+        }
+
+        trackAppEvent(
+          'customer_added',
+          {
+            customerName: params.customerName,
+            phone: params.phone,
+            openingBalance: params.openingBalance,
+          },
+          { businessName: newState.businessName }
+        );
+
+        showToast(result.message || `${params.customerName} added to customers.`, 'success');
+        return true;
+      } catch (err: any) {
+        showToast("Couldn't save customer. Nothing was saved.", 'warning');
+        return false;
+      }
+    },
+    [state, user, syncLedgerToCloud]
+  );
+
+  const handleQuickAddCustomer = useCallback(
+    async (name: string, phone?: string) => {
+      return handleSubmitCustomer({
+        customerName: name,
+        phone,
+      });
+    },
+    [handleSubmitCustomer]
+  );
 
   // Compute daily summary for currently selected date
   const selectedDaySummary = useMemo(() => {
@@ -1613,6 +1959,10 @@ export default function App() {
             onDeleteEvent={handleDeleteEvent}
             observantInsights={observantInsights}
             onSelectInsightAction={handleSelectInsightAction}
+            onOpenRecordSale={handleOpenRecordSale}
+            onOpenRecordExpense={handleOpenRecordExpense}
+            onOpenAddStock={handleOpenAddStock}
+            onOpenAddCustomer={handleOpenAddCustomer}
           />
         )}
 
@@ -1784,6 +2134,71 @@ export default function App() {
 
       {/* Cloud Authentication & Store Account Management Modal */}
       <AuthModal onShowToast={showToast} />
+
+      {/* 1. Record Sale Bottom Sheet */}
+      <RecordSaleSheet
+        isOpen={activeActionSheet === 'sale'}
+        isMinimized={isSheetMinimized}
+        onClose={handleCloseActionSheet}
+        onMinimize={handleMinimizeActionSheet}
+        onExpand={handleExpandActionSheet}
+        products={state.products}
+        customers={state.customers}
+        onSubmitSale={handleSubmitSale}
+        onQuickAddCustomer={handleQuickAddCustomer}
+        onShowToast={showToast}
+        onUpdateDraftSummary={setDraftSummary}
+      />
+
+      {/* 2. Record Expense Bottom Sheet */}
+      <RecordExpenseSheet
+        isOpen={activeActionSheet === 'expense'}
+        isMinimized={isSheetMinimized}
+        onClose={handleCloseActionSheet}
+        onMinimize={handleMinimizeActionSheet}
+        onExpand={handleExpandActionSheet}
+        onSubmitExpense={handleSubmitExpense}
+        onShowToast={showToast}
+        onUpdateDraftSummary={setDraftSummary}
+      />
+
+      {/* 3. Add Stock Bottom Sheet */}
+      <AddStockSheet
+        isOpen={activeActionSheet === 'stock'}
+        isMinimized={isSheetMinimized}
+        onClose={handleCloseActionSheet}
+        onMinimize={handleMinimizeActionSheet}
+        onExpand={handleExpandActionSheet}
+        products={state.products}
+        suppliers={state.suppliers}
+        onSubmitStock={handleSubmitStock}
+        onShowToast={showToast}
+        onUpdateDraftSummary={setDraftSummary}
+      />
+
+      {/* 4. Add Customer Bottom Sheet */}
+      <AddCustomerSheet
+        isOpen={activeActionSheet === 'customer'}
+        isMinimized={isSheetMinimized}
+        onClose={handleCloseActionSheet}
+        onMinimize={handleMinimizeActionSheet}
+        onExpand={handleExpandActionSheet}
+        customers={state.customers}
+        onSubmitCustomer={handleSubmitCustomer}
+        onNavigateToCustomer={() => setActiveTab('memory')}
+        onShowToast={showToast}
+        onUpdateDraftSummary={setDraftSummary}
+      />
+
+      {/* Compact Draft Bar when any action sheet is minimized */}
+      {activeActionSheet && isSheetMinimized && (
+        <ActionDraftBar
+          actionType={activeActionSheet}
+          draftSummary={draftSummary}
+          onReopen={handleExpandActionSheet}
+          onDiscard={handleDiscardActionDraft}
+        />
+      )}
     </div>
   );
 }
