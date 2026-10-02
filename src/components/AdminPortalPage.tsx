@@ -112,26 +112,25 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
       cleanEnteredPassword.toLowerCase() === FOUNDER_PASSWORD.toLowerCase();
 
     if (isFounderPasswordMatch) {
-      const directToken = `karra_adm_${Date.now()}_founder`;
-      sessionStorage.setItem('karra_admin_token', directToken);
-      localStorage.setItem('karra_admin_token', directToken);
+      let token: string = FOUNDER_PASSWORD;
+      try {
+        const res = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: normalizedEmail, password: trimmedPass }),
+        });
+        const d = await res.json();
+        if (d?.token) {
+          token = d.token;
+        }
+      } catch {
+        token = FOUNDER_PASSWORD;
+      }
+
+      sessionStorage.setItem('karra_admin_token', token);
+      localStorage.setItem('karra_admin_token', token);
       sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
       localStorage.setItem(ADMIN_SESSION_KEY, 'true');
-
-      // Attempt server sync in background without blocking login
-      fetch('/api/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: normalizedEmail, password: trimmedPass }),
-      })
-        .then((r) => r.json())
-        .then((d) => {
-          if (d?.token) {
-            sessionStorage.setItem('karra_admin_token', d.token);
-            localStorage.setItem('karra_admin_token', d.token);
-          }
-        })
-        .catch(() => {});
 
       await signInAsFounder();
       setIsAdminAuthenticated(true);

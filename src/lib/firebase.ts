@@ -546,14 +546,17 @@ export async function fetchAdminAllFirestoreUsers(): Promise<Array<{
   profile: UserProfile;
   ledger?: Partial<BusinessState> | null;
 }>> {
-  if (!auth.currentUser) return [];
   try {
     const usersCol = collection(db, 'users');
     const snapshot = await getDocs(usersCol);
     const results: Array<{ profile: UserProfile; ledger?: Partial<BusinessState> | null }> = [];
 
     for (const userDoc of snapshot.docs) {
-      const profile = userDoc.data() as UserProfile;
+      const data = userDoc.data() as UserProfile;
+      const profile: UserProfile = {
+        ...data,
+        id: data.id || userDoc.id,
+      };
       let ledgerData: Partial<BusinessState> | null = null;
       try {
         const ledgerRef = doc(db, 'users', userDoc.id, 'data', 'ledger');
@@ -561,7 +564,7 @@ export async function fetchAdminAllFirestoreUsers(): Promise<Array<{
         if (ledgerSnap.exists()) {
           ledgerData = ledgerSnap.data() as Partial<BusinessState>;
         }
-      } catch {
+      } catch (lErr) {
         // Individual ledger read error ignored
       }
       results.push({ profile, ledger: ledgerData });
@@ -569,7 +572,7 @@ export async function fetchAdminAllFirestoreUsers(): Promise<Array<{
 
     return results;
   } catch (err) {
-    console.warn('Could not fetch all users from Firestore (might not be admin or offline):', err);
+    console.warn('Could not fetch all users from Firestore:', err);
     return [];
   }
 }
@@ -578,14 +581,18 @@ export async function fetchAdminAllFirestoreUsers(): Promise<Array<{
  * Admin: Fetch Firestore feedback records
  */
 export async function fetchAdminFirestoreFeedback(): Promise<any[]> {
-  if (!auth.currentUser) return [];
   try {
     const colRef = collection(db, 'beta_feedback');
     const q = query(colRef, orderBy('createdAt', 'desc'), limit(150));
     const snap = await getDocs(q);
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch {
-    return [];
+    try {
+      const snap = await getDocs(collection(db, 'beta_feedback'));
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -593,26 +600,46 @@ export async function fetchAdminFirestoreFeedback(): Promise<any[]> {
  * Admin: Fetch Firestore access requests
  */
 export async function fetchAdminFirestoreAccessRequests(): Promise<any[]> {
-  if (!auth.currentUser) return [];
   try {
     const colRef = collection(db, 'beta_access_requests');
     const q = query(colRef, orderBy('createdAt', 'desc'), limit(150));
     const snap = await getDocs(q);
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch {
-    return [];
+    try {
+      const snap = await getDocs(collection(db, 'beta_access_requests'));
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {
+      return [];
+    }
   }
 }
 
 /**
  * Admin: Fetch Firestore beta events
  */
-export async function fetchAdminFirestoreEvents(limitCount = 200): Promise<any[]> {
-  if (!auth.currentUser) return [];
+export async function fetchAdminFirestoreEvents(limitCount = 500): Promise<any[]> {
   try {
     const colRef = collection(db, 'beta_events');
     const q = query(colRef, orderBy('timestamp', 'desc'), limit(limitCount));
     const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch {
+    try {
+      const snap = await getDocs(collection(db, 'beta_events'));
+      return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch {
+      return [];
+    }
+  }
+}
+
+/**
+ * Admin: Fetch Firestore invitations
+ */
+export async function fetchAdminFirestoreInvitations(): Promise<any[]> {
+  try {
+    const snap = await getDocs(collection(db, 'beta_invitations'));
     return snap.docs.map(d => ({ id: d.id, ...d.data() }));
   } catch {
     return [];

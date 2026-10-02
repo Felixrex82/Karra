@@ -47,6 +47,7 @@ import {
   fetchAdminFirestoreEvents,
   fetchAdminFirestoreFeedback,
   fetchAdminFirestoreAccessRequests,
+  fetchAdminFirestoreInvitations,
 } from '../lib/firebase';
 
 interface AdminDashboardViewProps {
@@ -57,6 +58,7 @@ interface AdminDashboardViewProps {
 }
 
 const FOUNDER_EMAIL = 'olamidefelix54@gmail.com';
+const FOUNDER_KEY = '@Felixrex1';
 
 export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onShowToast,
@@ -96,14 +98,14 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
 
   const getAdminSecret = () => {
     try {
-      return (
+      const stored =
         sessionStorage.getItem('karra_admin_token') ||
         localStorage.getItem('karra_admin_token') ||
-        sessionStorage.getItem('karra_admin_auth') ||
-        'founder_active_admin'
-      );
+        sessionStorage.getItem('karra_admin_auth');
+      if (stored && stored.trim()) return stored.trim();
+      return FOUNDER_KEY;
     } catch {
-      return 'founder_active_admin';
+      return FOUNDER_KEY;
     }
   };
 
@@ -113,7 +115,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       'Content-Type': 'application/json',
       'x-admin-email': user?.email || FOUNDER_EMAIL,
       'x-admin-secret': secret,
-      ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
+      Authorization: `Bearer ${secret}`,
     };
   };
 
@@ -155,23 +157,26 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         safeFetchJson('/api/admin/events?limit=1000'),
       ]);
 
-      // 2. Fetch Live Firestore data in parallel if founder has Firebase session
+      // 2. Fetch Live Firestore data in parallel
       let firestoreUsers: Array<{ profile: any; ledger?: any }> = [];
       let firestoreEvents: any[] = [];
       let firestoreFeedback: any[] = [];
       let firestoreRequests: any[] = [];
+      let firestoreInvitations: any[] = [];
 
       try {
-        const [fsUsers, fsEvents, fsFb, fsReqs] = await Promise.all([
+        const [fsUsers, fsEvents, fsFb, fsReqs, fsInvs] = await Promise.all([
           fetchAdminAllFirestoreUsers(),
           fetchAdminFirestoreEvents(500),
           fetchAdminFirestoreFeedback(),
           fetchAdminFirestoreAccessRequests(),
+          fetchAdminFirestoreInvitations(),
         ]);
         firestoreUsers = fsUsers || [];
         firestoreEvents = fsEvents || [];
         firestoreFeedback = fsFb || [];
         firestoreRequests = fsReqs || [];
+        firestoreInvitations = fsInvs || [];
       } catch (fsErr) {
         console.warn('Firestore admin direct read skipped or partially loaded:', fsErr);
       }
@@ -217,9 +222,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         let totalTx = 0;
         let sales = 0;
         let expenses = 0;
-        let stock = 0;
-        let customers = 0;
-        let aiQueries = 0;
+        let stock = (ledger?.products || []).length;
+        let customers = (ledger?.customers || []).length;
+        let aiQueries = (ledger?.chatHistory || []).length;
         let distinctDays = new Set<string>();
 
         if (ledger) {
@@ -227,9 +232,6 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           totalTx = ledgerEvents.length;
           sales = ledgerEvents.filter((e: any) => e.type === 'SALE' || (e.totalRevenue && e.totalRevenue > 0)).length;
           expenses = ledgerEvents.filter((e: any) => e.type === 'EXPENSE' || (e.totalCostAtTime && e.totalCostAtTime > 0)).length;
-          stock = (ledger.products || []).length;
-          customers = (ledger.customers || []).length;
-          aiQueries = (ledger.chatHistory || []).length;
 
           ledgerEvents.forEach((ev: any) => {
             const dateStr = ev.date || (ev.timestamp ? ev.timestamp.slice(0, 10) : null);
@@ -246,6 +248,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           lastActiveAt:
             ledger?.updatedAt ||
             profile.updatedAt ||
+            (ledger?.events && ledger.events.length > 0
+              ? (ledger.events[ledger.events.length - 1].timestamp || ledger.events[ledger.events.length - 1].date)
+              : null) ||
             existing?.lastActiveAt ||
             new Date().toISOString(),
           status: profile.betaStatus === 'suspended' ? 'suspended' : 'active',
@@ -260,7 +265,7 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
           aiInteractionsCount: Math.max(aiQueries, existing?.aiInteractionsCount || 0),
           memoryUpdatesCount: 0,
           activeDaysCount: Math.max(distinctDays.size, existing?.activeDaysCount || 1),
-          productsCount: (ledger?.products || []).length,
+          productsCount: stock,
         };
 
         userMap.set(uid, mergedRecord);
@@ -286,27 +291,118 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         if (ev && ev.id) eventMap.set(ev.id, ev);
       });
 
-      // Extract real events from Firestore ledgers so timeline is populated
+      // Extract comprehensive real events from Firestore ledgers so timeline is populated
       firestoreUsers.forEach(({ profile, ledger }) => {
-        if (!ledger || !Array.isArray(ledger.events)) return;
-        ledger.events.forEach((lev: any) => {
-          const evId = lev.id || `lev_${lev.date}_${lev.totalRevenue || lev.amount}`;
-          if (!eventMap.has(evId)) {
-            const isSale = lev.type === 'SALE' || (lev.totalRevenue && lev.totalRevenue > 0);
-            eventMap.set(evId, {
-              id: evId,
-              userId: profile.id,
-              userEmail: profile.email || '',
-              businessName: ledger.businessName || profile.businessName || 'Business Account',
-              eventName: isSale ? 'sale_recorded' : 'expense_recorded',
-              timestamp: lev.timestamp || (lev.date ? `${lev.date}T12:00:00.000Z` : new Date().toISOString()),
-              metadata: {
-                amount: lev.totalRevenue || lev.amount || lev.cashReceived,
-                headline: lev.headline || lev.note,
-              },
-            });
-          }
-        });
+        // User registration event
+        const regEvId = `reg_${profile.id}`;
+        if (!eventMap.has(regEvId)) {
+          eventMap.set(regEvId, {
+            id: regEvId,
+            userId: profile.id,
+            userEmail: profile.email || '',
+            businessName: ledger?.businessName || profile.businessName || 'Business Account',
+            eventName: 'user_registered',
+            timestamp: profile.createdAt || profile.betaJoinedAt || new Date().toISOString(),
+            metadata: {
+              betaInvitationCode: profile.betaInvitationCode,
+            },
+          });
+        }
+
+        // Ledger financial transactions (sales, expenses, debt recovery)
+        if (ledger && Array.isArray(ledger.events)) {
+          ledger.events.forEach((lev: any) => {
+            const evId = lev.id || `lev_${profile.id}_${lev.date}_${lev.timestamp || Math.random()}`;
+            if (!eventMap.has(evId)) {
+              let eventName = 'sale_recorded';
+              if (lev.type === 'EXPENSE') eventName = 'expense_recorded';
+              else if (lev.type === 'DEBT_PAYMENT') eventName = 'debt_recorded';
+              else if (lev.type === 'SALE') eventName = 'sale_recorded';
+              else if (lev.totalRevenue && lev.totalRevenue > 0) eventName = 'sale_recorded';
+              else if (lev.totalCostAtTime && lev.totalCostAtTime > 0) eventName = 'expense_recorded';
+              else eventName = 'transaction_created';
+
+              eventMap.set(evId, {
+                id: evId,
+                userId: profile.id,
+                userEmail: profile.email || '',
+                businessName: ledger.businessName || profile.businessName || 'Business Account',
+                eventName,
+                timestamp: lev.timestamp || (lev.date ? `${lev.date}T12:00:00.000Z` : new Date().toISOString()),
+                metadata: {
+                  amount: lev.totalRevenue || lev.amount || lev.cashReceived || lev.totalCostAtTime || 0,
+                  headline: lev.headline || lev.summary || lev.rawUserText || 'Transaction Record',
+                  productName: lev.productName,
+                  customerName: lev.customerName,
+                  type: lev.type,
+                },
+              });
+            }
+          });
+        }
+
+        // Real AI Chat interactions
+        if (ledger && Array.isArray(ledger.chatHistory)) {
+          ledger.chatHistory.forEach((chat: any, idx: number) => {
+            const chatEvId = `chat_${profile.id}_${chat.id || idx}_${chat.timestamp || ''}`;
+            if (!eventMap.has(chatEvId)) {
+              eventMap.set(chatEvId, {
+                id: chatEvId,
+                userId: profile.id,
+                userEmail: profile.email || '',
+                businessName: ledger.businessName || profile.businessName || 'Business Account',
+                eventName: 'ai_query',
+                timestamp: chat.timestamp || profile.updatedAt || new Date().toISOString(),
+                metadata: {
+                  question: chat.text || chat.message || chat.prompt || 'AI Assistant Inquiry',
+                },
+              });
+            }
+          });
+        }
+
+        // Product inventory additions
+        if (ledger && Array.isArray(ledger.products)) {
+          ledger.products.forEach((prod: any, idx: number) => {
+            const prodEvId = `prod_${profile.id}_${prod.id || idx}`;
+            if (!eventMap.has(prodEvId)) {
+              eventMap.set(prodEvId, {
+                id: prodEvId,
+                userId: profile.id,
+                userEmail: profile.email || '',
+                businessName: ledger.businessName || profile.businessName || 'Business Account',
+                eventName: 'stock_updated',
+                timestamp: prod.createdAt || profile.createdAt || new Date().toISOString(),
+                metadata: {
+                  productName: prod.name,
+                  category: prod.category,
+                  sellingPrice: prod.sellingPrice,
+                },
+              });
+            }
+          });
+        }
+
+        // Customer profiles registered
+        if (ledger && Array.isArray(ledger.customers)) {
+          ledger.customers.forEach((cust: any, idx: number) => {
+            const custEvId = `cust_${profile.id}_${cust.id || idx}`;
+            if (!eventMap.has(custEvId)) {
+              eventMap.set(custEvId, {
+                id: custEvId,
+                userId: profile.id,
+                userEmail: profile.email || '',
+                businessName: ledger.businessName || profile.businessName || 'Business Account',
+                eventName: 'customer_added',
+                timestamp: cust.createdAt || profile.createdAt || new Date().toISOString(),
+                metadata: {
+                  customerName: cust.name,
+                  phone: cust.phone,
+                },
+              });
+            }
+          });
+        }
       });
 
       const reconciledEvents = Array.from(eventMap.values()).sort((a, b) =>
@@ -314,9 +410,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
       );
       setEvents(reconciledEvents);
 
-      // 5. Invitations (strictly real invitations from backend & local storage)
-      const serverInvs: BetaInvitation[] = Array.isArray(invData?.invitations) ? invData.invitations : [];
-      setInvitations(serverInvs);
+      // 5. Invitations (strictly real invitations from backend & firestore)
+      const invMap = new Map<string, BetaInvitation>();
+      if (Array.isArray(invData?.invitations)) {
+        invData.invitations.forEach((i: any) => invMap.set(i.code, i));
+      }
+      firestoreInvitations.forEach((i: any) => {
+        if (i && i.code) invMap.set(i.code, i);
+      });
+      setInvitations(Array.from(invMap.values()));
 
       // 6. Feedback
       const feedbackMap = new Map<string, BetaFeedbackItem>();
