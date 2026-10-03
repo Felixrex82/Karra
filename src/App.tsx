@@ -57,6 +57,22 @@ import { AddStockSheet } from './components/actions/AddStockSheet';
 import { AddCustomerSheet } from './components/actions/AddCustomerSheet';
 import { ActionDraftBar, ActionType } from './components/actions/ActionDraftBar';
 import { executeBusinessAction } from './engine/businessEngine';
+import { NotificationCenter } from './components/notifications/NotificationCenter';
+import { NotificationSettingsModal } from './components/notifications/NotificationSettingsModal';
+import {
+  NotificationItem,
+  NotificationPreferences,
+  DEFAULT_NOTIFICATION_PREFERENCES,
+} from './types/notification';
+import {
+  loadNotificationPreferences,
+  saveNotificationPreferences,
+  loadStoredNotifications,
+  saveStoredNotifications,
+  registerServiceWorker,
+  deliverNotification,
+} from './lib/notificationService';
+import { evaluateNotificationDecision } from './engine/notificationEngine';
 
 const getStorageKey = (uid?: string | null): string => {
   if (!uid) return 'kudios_guest_state';
@@ -156,6 +172,282 @@ export default function App() {
   const [activeActionSheet, setActiveActionSheet] = useState<ActionType | null>(null);
   const [isSheetMinimized, setIsSheetMinimized] = useState<boolean>(false);
   const [draftSummary, setDraftSummary] = useState<string>('');
+
+  // Business Notification & Reminder Center
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [notificationPreferences, setNotificationPreferences] =
+    useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES);
+  const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
+  const [isNotificationSettingsOpen, setIsNotificationSettingsOpen] = useState(false);
+
+  // Initialize service worker, permissions and notification listeners
+  useEffect(() => {
+    registerServiceWorker();
+
+    // Check for openAction in URL query (e.g. from background push notification click)
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const openAction = params.get('openAction');
+      if (openAction) {
+        handleNotificationAction(openAction);
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+    } catch {}
+
+    // Listen for Service Worker action clicks
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      const handleSwMessage = (e: MessageEvent) => {
+        if (e.data?.type === 'KARRA_NOTIFICATION_ACTION' && e.data.actionType) {
+          handleNotificationAction(e.data.actionType);
+        }
+      };
+      navigator.serviceWorker.addEventListener('message', handleSwMessage);
+      return () => {
+        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+      };
+    }
+  }, []);
+
+  // Load user notifications and preferences on auth state change
+  useEffect(() => {
+    const uid = user?.uid;
+    const loadedPrefs = loadNotificationPreferences(uid);
+    setNotificationPreferences(loadedPrefs);
+    const localNotifs = loadStoredNotifications(uid);
+    setNotifications(localNotifs);
+
+    // Sync from server if online
+    if (uid && !user.isAnonymous) {
+      fetch(`/api/notifications?userId=${encodeURIComponent(uid)}`)
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.success) {
+            if (data.preferences) {
+              setNotificationPreferences(data.preferences);
+              saveNotificationPreferences(data.preferences, uid);
+            }
+            if (Array.isArray(data.notifications) && data.notifications.length > 0) {
+              setNotifications(data.notifications);
+              saveStoredNotifications(data.notifications, uid);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, [user?.uid, user?.isAnonymous]);
+
+  // Handle action click from notification drawer or push notification
+  const handleNotificationAction = (actionType: string) => {
+    switch (actionType) {
+      case 'RECORD_SALE':
+      case 'sale':
+        setActiveActionSheet('sale');
+        setIsSheetMinimized(false);
+        break;
+      case 'RECORD_EXPENSE':
+      case 'expense':
+        setActiveActionSheet('expense');
+        setIsSheetMinimized(false);
+        break;
+      case 'ADD_STOCK':
+      case 'stock':
+        setActiveActionSheet('stock');
+        setIsSheetMinimized(false);
+        break;
+      case 'ADD_CUSTOMER':
+      case 'customer':
+        setActiveActionSheet('customer');
+        setIsSheetMinimized(false);
+        break;
+      case 'VIEW_TRANSACTIONS':
+        setActiveTab('transactions');
+        break;
+      case 'VIEW_PROFILE':
+        setActiveTab('profile');
+        break;
+      case 'CHAT_KARRA':
+      case 'chat':
+      default:
+        setActiveTab('dashboard');
+        break;
+    }
+  };
+
+  const handleMarkNotificationsRead = async (notificationIds?: string[]) => {
+    const now = new Date().toISOString();
+    const updated = notifications.map((n) => {
+      if (!notificationIds || notificationIds.includes(n.id)) {
+        return { ...n, read: true, readAt: now };
+      }
+      return n;
+    });
+    setNotifications(updated);
+    saveStoredNotifications(updated, user?.uid);
+
+    if (user?.uid) {
+      try {
+        await fetch('/api/notifications/read', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.uid, notificationIds }),
+        });
+      } catch {}
+    }
+  };
+
+  const handleSaveNotificationPreferences = async (updated: NotificationPreferences) => {
+    setNotificationPreferences(updated);
+    saveNotificationPreferences(updated, user?.uid);
+
+    if (user?.uid) {
+      try {
+        await fetch('/api/notifications/preferences', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: user.uid, preferences: updated }),
+        });
+      } catch {}
+    }
+  };
+
+  const handleTriggerTestNotification = async (
+    type: 'morning' | 'day' | 'night' | 'first_use' | 'inactive'
+  ) => {
+    const uid = user?.uid || 'merchant';
+    try {
+      const res = await fetch('/api/notifications/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: uid, type }),
+      });
+      const data = await res.json();
+      if (data.success && data.notification) {
+        const delivered = await deliverNotification(
+          data.notification,
+          uid,
+          notificationPreferences
+        );
+        setNotifications((prev) => [delivered, ...prev]);
+        showToast(data.message || `Test ${type} reminder dispatched.`, 'success');
+        return;
+      }
+    } catch {}
+
+    // Fallback if offline
+    const fallback = await deliverNotification(
+      {
+        userId: uid,
+        category:
+          type === 'morning'
+            ? 'MORNING_REMINDER'
+            : type === 'day'
+            ? 'DAY_REMINDER'
+            : 'NIGHT_REMINDER',
+        title:
+          type === 'morning'
+            ? 'Good morning 👋'
+            : type === 'day'
+            ? 'Don’t let today’s business slip away.'
+            : 'Before you call it a day…',
+        message:
+          type === 'morning'
+            ? 'What’s happening in your business today? Tell Karra and let it keep track for you.'
+            : 'Take a moment to record your business activity.',
+        actionType: 'CHAT_KARRA',
+        actionLabel: 'Tell Karra',
+        deliveryChannel: 'both',
+      },
+      uid,
+      notificationPreferences
+    );
+    setNotifications((prev) => [fallback, ...prev]);
+    showToast(`Test ${type} reminder dispatched.`, 'success');
+  };
+
+  // Periodic intelligent reminder evaluation
+  useEffect(() => {
+    if (!user || !notificationPreferences.enabled) return;
+
+    const runEvaluation = async () => {
+      const todayStr = getTodayDateStr();
+      const eventsToday = (state.events || []).filter((e) => e.date === todayStr);
+      const recentToday = notifications.filter((n) => n.timestamp?.startsWith(todayStr));
+
+      // 1. Evaluate locally
+      const decision = evaluateNotificationDecision({
+        userId: user.uid,
+        userEmail: user.email || userProfile?.email,
+        businessName: userProfile?.businessName || state.businessName,
+        signupTimestamp: userProfile?.createdAt || (user as any).metadata?.creationTime,
+        lastActiveTimestamp: state.events[0]?.timestamp || new Date().toISOString(),
+        preferences: notificationPreferences,
+        todayDateStr: todayStr,
+        eventsToday,
+        lifetimeEventsCount: (state.events || []).length,
+        recentNotificationsToday: recentToday,
+      });
+
+      if (decision.shouldSend && decision.title && decision.message && decision.category) {
+        const delivered = await deliverNotification(
+          {
+            userId: user.uid,
+            category: decision.category,
+            title: decision.title,
+            message: decision.message,
+            actionType: decision.actionType,
+            actionLabel: decision.actionLabel,
+            deliveryChannel:
+              notificationPreferences.channels.browserPush && notificationPreferences.channels.inApp
+                ? 'both'
+                : notificationPreferences.channels.browserPush
+                ? 'browser_push'
+                : 'in_app',
+            contextMeta: {
+              window: decision.window,
+              reason: decision.reason,
+            },
+          },
+          user.uid,
+          notificationPreferences
+        );
+
+        setNotifications((prev) => [delivered, ...prev]);
+
+        // Sync with backend
+        try {
+          fetch('/api/notifications', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId: user.uid,
+              category: decision.category,
+              title: decision.title,
+              message: decision.message,
+              actionType: decision.actionType,
+              actionLabel: decision.actionLabel,
+              contextMeta: { window: decision.window, reason: decision.reason },
+            }),
+          }).catch(() => {});
+        } catch {}
+      }
+    };
+
+    // Run evaluation after 5 seconds on load, and then every 12 minutes
+    const initialTimer = setTimeout(runEvaluation, 5000);
+    const intervalTimer = setInterval(runEvaluation, 12 * 60 * 1000);
+
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(intervalTimer);
+    };
+  }, [
+    user?.uid,
+    notificationPreferences,
+    state.events,
+    state.businessName,
+    userProfile?.businessName,
+    userProfile?.createdAt,
+  ]);
 
   // Track mutations made by the user while the ledger is loaded
   useEffect(() => {
@@ -1917,6 +2209,8 @@ export default function App() {
         theme={theme}
         onToggleTheme={toggleTheme}
         onShowToast={showToast}
+        onOpenNotificationCenter={() => setIsNotificationCenterOpen(true)}
+        unreadNotificationCount={notifications.filter((n) => !n.read).length}
       />
 
       {/* Floating Feedback Toast (Safe distance above mobile dock) */}
@@ -2048,6 +2342,8 @@ export default function App() {
               onOpenBusinessOverview={() => setIsDailySalesModalOpen(true)}
               theme={theme}
               onToggleTheme={toggleTheme}
+              onOpenNotificationSettings={() => setIsNotificationSettingsOpen(true)}
+              notificationPreferences={notificationPreferences}
             />
           </div>
         )}
@@ -2199,6 +2495,30 @@ export default function App() {
           onDiscard={handleDiscardActionDraft}
         />
       )}
+
+      {/* 5. Business Notification Center Slide-over */}
+      <NotificationCenter
+        isOpen={isNotificationCenterOpen}
+        onClose={() => setIsNotificationCenterOpen(false)}
+        notifications={notifications}
+        onMarkRead={handleMarkNotificationsRead}
+        onOpenSettings={() => {
+          setIsNotificationCenterOpen(false);
+          setIsNotificationSettingsOpen(true);
+        }}
+        onOpenAction={handleNotificationAction}
+        onTriggerTest={handleTriggerTestNotification}
+      />
+
+      {/* 6. Business Notification Settings Modal */}
+      <NotificationSettingsModal
+        isOpen={isNotificationSettingsOpen}
+        onClose={() => setIsNotificationSettingsOpen(false)}
+        preferences={notificationPreferences}
+        onSavePreferences={handleSaveNotificationPreferences}
+        onSendTestNotification={handleTriggerTestNotification}
+        onShowToast={showToast}
+      />
     </div>
   );
 }

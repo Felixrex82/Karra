@@ -29,6 +29,8 @@ interface HeaderProps {
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
   onShowToast?: (message: string, type?: 'success' | 'info' | 'warning') => void;
+  onOpenNotificationCenter?: () => void;
+  unreadNotificationCount?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -44,6 +46,8 @@ export const Header: React.FC<HeaderProps> = ({
   theme,
   onToggleTheme,
   onShowToast,
+  onOpenNotificationCenter,
+  unreadNotificationCount = 0,
 }) => {
   return (
     <>
@@ -175,14 +179,27 @@ export const Header: React.FC<HeaderProps> = ({
               )}
             </button>
 
-            {/* Notifications Bell (from graphic) */}
+            {/* Notifications Bell */}
             <button
+              id="btn-header-notifications"
               type="button"
-              onClick={() => onShowToast && onShowToast('Notifications active.', 'info')}
-              className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-[#132235] hover:bg-slate-200 dark:hover:bg-[#1A2E45] border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center transition-colors cursor-pointer"
+              onClick={() => {
+                if (onOpenNotificationCenter) {
+                  onOpenNotificationCenter();
+                } else if (onShowToast) {
+                  onShowToast('Notifications active.', 'info');
+                }
+              }}
+              className="relative w-9 h-9 rounded-xl bg-slate-100 dark:bg-[#132235] hover:bg-slate-200 dark:hover:bg-[#1A2E45] border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 flex items-center justify-center transition-colors cursor-pointer"
               title="Notifications"
+              aria-label="Open notifications"
             >
               <Bell className="w-4 h-4" />
+              {unreadNotificationCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-emerald-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-white dark:ring-[#0B0F17] shadow-xs animate-in zoom-in-50">
+                  {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                </span>
+              )}
             </button>
 
             {/* Profile Avatar Button (from graphic) */}

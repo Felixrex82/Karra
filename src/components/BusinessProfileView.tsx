@@ -23,6 +23,7 @@ import {
 import { useAuth } from '../contexts/AuthContext';
 import { BusinessState, BusinessProfile } from '../types';
 import { formatNaira } from '../engine/calculations';
+import { NotificationPreferences } from '../types/notification';
 
 interface BusinessProfileViewProps {
   state: BusinessState;
@@ -34,6 +35,8 @@ interface BusinessProfileViewProps {
   onOpenBusinessOverview?: () => void;
   theme?: 'light' | 'dark';
   onToggleTheme?: () => void;
+  onOpenNotificationSettings?: () => void;
+  notificationPreferences?: NotificationPreferences;
 }
 
 const BUSINESS_CATEGORIES = [
@@ -60,6 +63,8 @@ export const BusinessProfileView: React.FC<BusinessProfileViewProps> = ({
   onOpenBusinessOverview,
   theme = 'dark',
   onToggleTheme,
+  onOpenNotificationSettings,
+  notificationPreferences,
 }) => {
   const { user, userProfile, signOut } = useAuth();
 
@@ -466,14 +471,19 @@ export const BusinessProfileView: React.FC<BusinessProfileViewProps> = ({
         <div className="divide-y divide-slate-100 dark:divide-[#16273A]">
           {/* Notifications */}
           <div
+            id="btn-profile-notifications"
             onClick={() => {
-              setNotificationsEnabled(!notificationsEnabled);
-              onShowToast(
-                !notificationsEnabled
-                  ? 'Notifications enabled.'
-                  : 'Notifications muted.',
-                'info'
-              );
+              if (onOpenNotificationSettings) {
+                onOpenNotificationSettings();
+              } else {
+                setNotificationsEnabled(!notificationsEnabled);
+                onShowToast(
+                  !notificationsEnabled
+                    ? 'Notifications enabled.'
+                    : 'Notifications muted.',
+                  'info'
+                );
+              }
             }}
             className="py-3.5 flex items-center justify-between cursor-pointer group"
           >
@@ -481,10 +491,10 @@ export const BusinessProfileView: React.FC<BusinessProfileViewProps> = ({
               <Bell className="w-4 h-4 text-slate-500 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-white transition-colors" />
               <div>
                 <p className="text-xs sm:text-sm font-semibold text-slate-900 dark:text-white">
-                  Notifications
+                  Notifications & Reminders
                 </p>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Control your alerts and updates
+                  Morning, daytime & night business check-in schedule
                 </p>
               </div>
             </div>
@@ -492,12 +502,12 @@ export const BusinessProfileView: React.FC<BusinessProfileViewProps> = ({
             <div className="flex items-center space-x-2">
               <span
                 className={`text-xs font-semibold px-2 py-0.5 rounded-md ${
-                  notificationsEnabled
+                  (notificationPreferences?.enabled ?? notificationsEnabled)
                     ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-400'
                     : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
                 }`}
               >
-                {notificationsEnabled ? 'Active' : 'Muted'}
+                {(notificationPreferences?.enabled ?? notificationsEnabled) ? 'Active' : 'Muted'}
               </span>
               <ChevronRight className="w-4 h-4 text-slate-400 dark:text-slate-500 group-hover:text-slate-900 dark:group-hover:text-white transition-colors" />
             </div>

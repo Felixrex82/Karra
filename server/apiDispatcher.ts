@@ -30,6 +30,16 @@ import {
   updateFeedbackStatus,
   updateRequestStatus,
 } from './betaStore';
+import {
+  getUserNotificationPreferences,
+  updateUserNotificationPreferences,
+  listUserNotifications,
+  markNotificationsAsRead,
+  createNotification,
+  evaluateAndDispatchForUser,
+  sendTestNotification,
+  getNotificationAnalytics,
+} from './notificationEngine';
 
 export { FOUNDER_EMAIL };
 
@@ -624,6 +634,61 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
       });
     }
 
+    // H2. Admin Notification Analytics & Operations
+    if (targetPath === 'admin/notifications') {
+      if (!verifyAdminRequest(req)) {
+        return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
+      }
+      const analytics = getNotificationAnalytics();
+      return sendJson(res, 200, { success: true, analytics });
+    }
+
+    if (targetPath === 'admin/notifications/trigger-cycle') {
+      if (!verifyAdminRequest(req)) {
+        return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
+      }
+      const { users: fsUsers, events: fsEvents } = await getLiveFirestoreData();
+      const localUsers = listUsers();
+      const userMap = new Map<string, any>();
+      localUsers.forEach((u) => userMap.set(u.userId || (u as any).id, u));
+      fsUsers.forEach((u) => userMap.set(u.userId || (u as any).id, { ...userMap.get(u.userId || (u as any).id), ...u }));
+
+      const allUsers = Array.from(userMap.values());
+      const results: any[] = [];
+
+      for (const u of allUsers) {
+        const uid = u.userId || u.id;
+        if (!uid) continue;
+        const uEvents = fsEvents.filter((e) => e.userId === uid);
+        const todayStr = new Date().toISOString().split('T')[0];
+        const eventsToday = uEvents.filter((e) => e.timestamp?.startsWith(todayStr));
+
+        const resEval = evaluateAndDispatchForUser({
+          userId: uid,
+          userEmail: u.email,
+          businessName: u.businessName,
+          signupTimestamp: u.createdAt || u.betaJoinedAt,
+          lastActiveTimestamp: u.lastActiveAt || (uEvents[0]?.timestamp),
+          eventsToday,
+          lifetimeEventsCount: uEvents.length,
+        });
+        results.push({
+          userId: uid,
+          email: u.email,
+          businessName: u.businessName,
+          decision: resEval.decision,
+          dispatched: Boolean(resEval.notification),
+        });
+      }
+
+      return sendJson(res, 200, {
+        success: true,
+        evaluatedUsersCount: allUsers.length,
+        dispatchedCount: results.filter((r) => r.dispatched).length,
+        results,
+      });
+    }
+
     // I. Beta: Validate Code
     if (targetPath === 'beta/validate-code') {
       if (method !== 'POST') {
@@ -762,6 +827,146 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
       }
       trackBetaEvent({ userId, userEmail, businessName, eventName, metadata });
       return sendJson(res, 200, { success: true });
+    }
+
+    // N2. Notifications: Get User Notifications & Preferences
+    if (targetPath === 'notifications') {
+      const userId =
+        (urlParams.get('userId') as string) ||
+        (req.query?.userId as string) ||
+        (req.headers?.['x-user-id'] as string) ||
+        '';
+
+      if (!userId) {
+        return sendJson(res, 400, { success: false, error: 'userId is required.' });
+      }
+
+      if (method === 'GET') {
+        const notifications = listUserNotifications(userId);
+        const preferences = getUserNotificationPreferences(userId);
+        return sendJson(res, 200, {
+          success: true,
+          notifications,
+          preferences,
+          unreadCount: notifications.filter((n) => !n.read).length,
+        });
+      }
+
+      if (method === 'POST') {
+        // Create manual / system notification
+        const { category, title, message, actionType, actionLabel, deliveryChannel, contextMeta } = req.body;
+        if (!title || !message) {
+          return sendJson(res, 400, { success: false, error: 'title and message are required.' });
+        }
+        const created = createNotification(userId, {
+          category: category || 'CONTEXTUAL_FOLLOWUP',
+          title,
+          message,
+          actionType,
+          actionLabel,
+          deliveryChannel,
+          contextMeta,
+        });
+        return sendJson(res, 200, { success: true, notification: created });
+      }
+    }
+
+    // N3. Notifications: Update Preferences
+    if (targetPath === 'notifications/preferences') {
+      if (method !== 'POST') {
+        return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
+      }
+      const userId =
+        req.body?.userId ||
+        (req.headers?.['x-user-id'] as string) ||
+        '';
+      const preferences = req.body?.preferences || req.body || {};
+
+      if (!userId) {
+        return sendJson(res, 400, { success: false, error: 'userId is required.' });
+      }
+
+      const updated = updateUserNotificationPreferences(userId, preferences);
+      return sendJson(res, 200, { success: true, preferences: updated });
+    }
+
+    // N4. Notifications: Mark Read
+    if (targetPath === 'notifications/read') {
+      if (method !== 'POST') {
+        return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
+      }
+      const userId =
+        req.body?.userId ||
+        (req.headers?.['x-user-id'] as string) ||
+        '';
+      const { notificationIds } = req.body || {};
+
+      if (!userId) {
+        return sendJson(res, 400, { success: false, error: 'userId is required.' });
+      }
+
+      const count = markNotificationsAsRead(userId, notificationIds);
+      return sendJson(res, 200, { success: true, markedCount: count });
+    }
+
+    // N5. Notifications: Evaluate & Dispatch Contextual Reminder
+    if (targetPath === 'notifications/evaluate') {
+      if (method !== 'POST') {
+        return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
+      }
+      const {
+        userId,
+        userEmail,
+        businessName,
+        signupTimestamp,
+        lastActiveTimestamp,
+        eventsToday,
+        lifetimeEventsCount,
+        nowIso,
+      } = req.body || {};
+
+      if (!userId) {
+        return sendJson(res, 400, { success: false, error: 'userId is required.' });
+      }
+
+      const { decision, notification } = evaluateAndDispatchForUser({
+        userId,
+        userEmail,
+        businessName,
+        signupTimestamp,
+        lastActiveTimestamp,
+        eventsToday,
+        lifetimeEventsCount,
+        nowIso,
+      });
+
+      return sendJson(res, 200, {
+        success: true,
+        decision,
+        notification: notification || null,
+      });
+    }
+
+    // N6. Notifications: Send Test Notification
+    if (targetPath === 'notifications/test') {
+      if (method !== 'POST') {
+        return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
+      }
+      const { userId, type } = req.body || {};
+      if (!userId) {
+        return sendJson(res, 400, { success: false, error: 'userId is required.' });
+      }
+
+      const notification = sendTestNotification(
+        userId,
+        type || 'morning'
+      );
+
+      return sendJson(res, 200, {
+        success: true,
+        notification,
+        message: `Test ${type || 'morning'} notification dispatched successfully.`,
+      });
     }
 
     // O. Gemini: Interpret

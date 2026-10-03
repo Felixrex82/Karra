@@ -28,6 +28,9 @@ import {
   AdminSettingsTab,
 } from './admin/AdminSettingsTab';
 import {
+  AdminNotificationsTab,
+} from './admin/AdminNotificationsTab';
+import {
   AdminBusinessDetailModal,
 } from './admin/AdminBusinessDetailModal';
 import {
@@ -836,6 +839,15 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
                   onRevokeInvitation={handleRevokeInvitation}
                   onApproveAccessRequest={handleApproveAccessRequest}
                   onShowToast={onShowToast}
+                />
+              )}
+
+              {activeTab === 'notifications' && (
+                <AdminNotificationsTab
+                  users={users}
+                  adminSecret={getAdminSecret()}
+                  adminEmail={user?.email || FOUNDER_EMAIL}
+                  onShowToast={(msg, type) => onShowToast && onShowToast(msg, type)}
                 />
               )}
 

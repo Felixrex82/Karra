@@ -7,13 +7,14 @@ import {
   MessageSquare,
   Ticket,
   Settings,
+  Bell,
   ArrowLeft,
   ShieldCheck,
   X,
 } from 'lucide-react';
 import { KarraLogo } from '../KarraLogo';
 
-export type AdminTab = 'overview' | 'users' | 'activity' | 'analytics' | 'feedback' | 'beta' | 'settings';
+export type AdminTab = 'overview' | 'users' | 'activity' | 'analytics' | 'feedback' | 'beta' | 'notifications' | 'settings';
 
 interface AdminSidebarProps {
   activeTab: AdminTab;
@@ -74,6 +75,12 @@ export const AdminSidebar: React.FC<AdminSidebarProps> = ({
       icon: Ticket,
       badge: pendingRequestsCount > 0 ? pendingRequestsCount : undefined,
       description: 'Invitations & waitlist approval',
+    },
+    {
+      id: 'notifications' as AdminTab,
+      label: 'Reminders',
+      icon: Bell,
+      description: 'Automated 3-window reminder dispatch & logs',
     },
     {
       id: 'settings' as AdminTab,
