@@ -2290,6 +2290,9 @@ export default function App() {
               onExplainDate={(date) => handleExplainDaily(date)}
               businessName={state.businessName}
               onShowToast={showToast}
+              onNavigateToTab={(tab) => setActiveTab(tab as any)}
+              onOpenRecordSale={handleOpenRecordSale}
+              onOpenRecordExpense={handleOpenRecordExpense}
             />
           </div>
         )}

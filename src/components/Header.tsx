@@ -88,11 +88,11 @@ export const Header: React.FC<HeaderProps> = ({
               onClick={() => setActiveTab('calendar')}
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                 activeTab === 'calendar'
-                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-xs'
+                  ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-xs'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               }`}
             >
-              <Calendar className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+              <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
               <span>Calendar</span>
             </button>
 
@@ -249,14 +249,17 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             onClick={() => setActiveTab('calendar')}
-            className={`flex flex-col items-center justify-center py-1 px-0.5 rounded-xl text-[10px] font-bold transition-all min-h-[46px] active:scale-95 touch-manipulation ${
+            className={`flex flex-col items-center justify-center py-1 px-0.5 rounded-xl text-[10px] font-bold transition-all min-h-[46px] active:scale-95 touch-manipulation relative ${
               activeTab === 'calendar'
-                ? 'text-blue-700 dark:text-blue-400 bg-blue-50/80 dark:bg-blue-950/50 shadow-2xs font-extrabold'
-                : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                ? 'text-emerald-500 font-extrabold'
+                : 'text-slate-400 hover:text-white'
             }`}
           >
-            <Calendar className={`w-4 h-4 mb-0.5 ${activeTab === 'calendar' ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400 dark:text-slate-500'}`} />
+            <Calendar className={`w-4 h-4 mb-0.5 ${activeTab === 'calendar' ? 'text-emerald-400' : 'text-slate-400 dark:text-slate-500'}`} />
             <span className="truncate">Calendar</span>
+            {activeTab === 'calendar' && (
+              <span className="absolute bottom-0 w-6 h-0.5 rounded-full bg-emerald-500" />
+            )}
           </button>
 
           <button
