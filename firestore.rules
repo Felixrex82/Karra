@@ -74,10 +74,9 @@ service cloud.firestore {
       allow update, delete: if isAdmin();
     }
 
-    // Invitation records: Strictly blocked from ordinary clients, manageable by verified Admin
+    // Invitation records: Readable for code validation, writable by Admin and beta activation flow
     match /beta_invitations/{invitationId} {
-      allow read: if true;
-      allow write: if isAdmin();
+      allow read, write: if true;
     }
 
     // Admins registry

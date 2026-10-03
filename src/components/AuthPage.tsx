@@ -19,7 +19,7 @@ import {
   Moon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { formatAuthErrorMessage } from '../lib/firebase';
+import { formatAuthErrorMessage, validateFirestoreInvitation } from '../lib/firebase';
 import { KarraLogo } from './KarraLogo';
 import { LandingPage } from './LandingPage';
 
@@ -97,6 +97,16 @@ export const AuthPage: React.FC<AuthPageProps> = ({
         }
       } catch {
         // Fallback to local custom check
+      }
+
+      if (!data || !data.valid) {
+        // Check Firestore cloud invitations directly
+        try {
+          const fsRes = await validateFirestoreInvitation(cleanCode);
+          if (fsRes.valid) {
+            data = fsRes;
+          }
+        } catch {}
       }
 
       if (!data || !data.valid) {

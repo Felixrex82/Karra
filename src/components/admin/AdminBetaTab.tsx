@@ -85,7 +85,10 @@ export const AdminBetaTab: React.FC<AdminBetaTabProps> = ({
         setCustomCode('');
         setExpiryDays('');
         setMaxUses(1);
-        if (onShowToast) onShowToast(`Created invitation ${result.code}!`, 'success');
+        handleCopy(result.code);
+        if (onShowToast) onShowToast(`Created invitation ${result.code} & copied to clipboard!`, 'success');
+      } else {
+        if (onShowToast) onShowToast('Failed to create invitation. Please try again.', 'warning');
       }
     } catch {
       if (onShowToast) onShowToast('Failed to create invitation', 'warning');
@@ -182,10 +185,34 @@ export const AdminBetaTab: React.FC<AdminBetaTabProps> = ({
         <div className="space-y-6">
           {/* Create New Invitation Form */}
           <div className="p-5 rounded-3xl bg-slate-900/90 border border-slate-800 space-y-4">
-            <h3 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
-              <Plus className="w-4 h-4 text-emerald-400" />
-              Generate Beta Invitation Code
-            </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <h3 className="text-sm font-bold text-white tracking-tight flex items-center gap-2">
+                <Plus className="w-4 h-4 text-emerald-400" />
+                Generate Beta Invitation Code
+              </h3>
+              <button
+                type="button"
+                disabled={isCreating}
+                onClick={async () => {
+                  setIsCreating(true);
+                  try {
+                    const result = await onCreateInvitation({ maxUses: 1, notes: 'Instant Quick Code' });
+                    if (result) {
+                      handleCopy(result.code);
+                      if (onShowToast) onShowToast(`Instant Code: ${result.code} (Copied to clipboard!)`, 'success');
+                    }
+                  } catch (e: any) {
+                    if (onShowToast) onShowToast(e?.message || 'Could not generate code', 'warning');
+                  } finally {
+                    setIsCreating(false);
+                  }
+                }}
+                className="px-3.5 py-1.5 rounded-xl text-xs font-bold text-emerald-400 hover:text-emerald-300 bg-emerald-950/70 hover:bg-emerald-900/70 border border-emerald-800/60 transition-colors flex items-center justify-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                <span>⚡ Instant 1-Click Code</span>
+              </button>
+            </div>
 
             <form onSubmit={handleCreate} className="grid grid-cols-1 sm:grid-cols-4 gap-3">
               <div>

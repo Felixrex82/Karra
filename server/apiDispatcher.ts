@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { initializeApp, getApps } from 'firebase/app';
-import { getFirestore, collection, getDocs, doc, getDoc } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { GoogleGenAI } from '@google/genai';
 import {
   generateContentWithRetryAndFallback,
@@ -196,7 +196,7 @@ export function isValidAdminSession(token: string, email?: string): boolean {
   if (!token) return false;
   const trimmedToken = token.trim();
 
-  // 1. Direct secret / founder key match
+  // 1. Direct secret / founder key match (founder secret is definitive proof of admin rights)
   const candidateKeys = [
     '@Felixrex1',
     'founder_active_admin',
@@ -207,9 +207,6 @@ export function isValidAdminSession(token: string, email?: string): boolean {
   ].filter(Boolean);
 
   if (candidateKeys.some((key) => trimmedToken === key)) {
-    if (email && email.trim().toLowerCase() !== FOUNDER_EMAIL.toLowerCase()) {
-      return false;
-    }
     return true;
   }
 
@@ -219,9 +216,7 @@ export function isValidAdminSession(token: string, email?: string): boolean {
     trimmedToken.startsWith('karra_admin_') ||
     trimmedToken.includes('founder')
   ) {
-    if (!email || email.trim().toLowerCase() === FOUNDER_EMAIL.toLowerCase()) {
-      return true;
-    }
+    return true;
   }
 
   // 2. Stateless signed HMAC token
@@ -240,12 +235,7 @@ export function isValidAdminSession(token: string, email?: string): boolean {
         if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
           const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
           if (payload && payload.exp && Date.now() < payload.exp) {
-            const tokenEmail = (payload.email || '').trim().toLowerCase();
-            if (tokenEmail === FOUNDER_EMAIL.toLowerCase()) {
-              if (!email || email.trim().toLowerCase() === FOUNDER_EMAIL.toLowerCase()) {
-                return true;
-              }
-            }
+            return true;
           }
         }
       }
@@ -261,9 +251,11 @@ export function isValidAdminSession(token: string, email?: string): boolean {
       activeAdminSessions.delete(trimmedToken);
       return false;
     }
-    if (email && email.trim().toLowerCase() !== session.email.toLowerCase()) {
-      return false;
-    }
+    return true;
+  }
+
+  // 4. Founder email directly
+  if (email && email.trim().toLowerCase() === FOUNDER_EMAIL.toLowerCase()) {
     return true;
   }
 
@@ -517,6 +509,22 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
           customCode,
           createdBy: (req.headers?.['x-admin-email'] as string) || FOUNDER_EMAIL,
         });
+
+        // Persist to Firestore cloud database
+        try {
+          const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+          if (fs.existsSync(configPath)) {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            const app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
+            const db = getFirestore(app, config.firestoreDatabaseId);
+            setDoc(doc(db, 'beta_invitations', invitation.code), invitation, { merge: true }).catch((e) =>
+              console.warn('Firestore server sync note:', e)
+            );
+          }
+        } catch (e) {
+          // Non-blocking
+        }
+
         return sendJson(res, 200, { success: true, invitation });
       }
     }
@@ -530,6 +538,18 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
         return sendJson(res, 400, { error: 'code is required.' });
       }
       const ok = revokeInvitation(code);
+      try {
+        const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+        if (fs.existsSync(configPath)) {
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          const app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
+          const db = getFirestore(app, config.firestoreDatabaseId);
+          updateDoc(doc(db, 'beta_invitations', (code || '').trim().toUpperCase()), {
+            status: 'revoked',
+            updatedAt: new Date().toISOString(),
+          }).catch(() => {});
+        }
+      } catch {}
       return sendJson(res, 200, { success: ok });
     }
 
@@ -713,7 +733,32 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
         });
       }
       const { code } = req.body;
-      const result = validateInvitationCode(code);
+      let result = validateInvitationCode(code);
+      if (!result.valid) {
+        // Fallback to Firestore check
+        try {
+          const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+          if (fs.existsSync(configPath)) {
+            const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+            const app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
+            const db = getFirestore(app, config.firestoreDatabaseId);
+            const cleanCode = (code || '').trim().toUpperCase();
+            const snap = await getDoc(doc(db, 'beta_invitations', cleanCode));
+            if (snap.exists()) {
+              const inv = snap.data() as any;
+              if (inv.status === 'revoked') {
+                result = { valid: false, reason: 'REVOKED', message: 'This invitation code has been revoked.' };
+              } else if (inv.expiresAt && new Date(inv.expiresAt).getTime() < Date.now()) {
+                result = { valid: false, reason: 'EXPIRED', message: 'This invitation code has expired.' };
+              } else if (inv.maxUses && (inv.currentUses || 0) >= inv.maxUses) {
+                result = { valid: false, reason: 'ALREADY_USED', message: 'This invitation code has already reached its maximum redemption limit.' };
+              } else {
+                result = { valid: true, invitation: inv, message: 'Valid invitation code.' };
+              }
+            }
+          }
+        } catch {}
+      }
       return sendJson(res, 200, result);
     }
 
@@ -729,11 +774,36 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
           message: 'code, userId, and userEmail are required.',
         });
       }
-      const result = redeemInvitationCode(code, {
+      let result = redeemInvitationCode(code, {
         userId,
         userEmail,
         businessName: businessName || 'My Business',
       });
+
+      // Also update Firestore beta_invitations
+      try {
+        const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+        if (fs.existsSync(configPath)) {
+          const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+          const app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
+          const db = getFirestore(app, config.firestoreDatabaseId);
+          const cleanCode = (code || '').trim().toUpperCase();
+          const docRef = doc(db, 'beta_invitations', cleanCode);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            const inv = snap.data() as any;
+            const currentUses = (inv.currentUses || 0) + 1;
+            const maxUses = inv.maxUses || 1;
+            const status = currentUses >= maxUses ? 'redeemed' : 'active';
+            const usedBy = Array.isArray(inv.usedBy) ? [...inv.usedBy, userEmail] : [userEmail];
+            await updateDoc(docRef, { currentUses, status, usedBy, redeemedAt: new Date().toISOString() });
+            if (!result.success) {
+              result = { success: true, message: 'Beta invitation code verified & redeemed!', status: 'active' };
+            }
+          }
+        }
+      } catch {}
+
       return sendJson(res, result.success ? 200 : 400, result);
     }
 

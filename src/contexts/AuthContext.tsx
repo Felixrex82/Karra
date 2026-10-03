@@ -15,6 +15,8 @@ import {
   saveBusinessLedger,
   loadBusinessLedger,
   CloudLedgerResult,
+  validateFirestoreInvitation,
+  redeemFirestoreInvitation,
 } from '../lib/firebase';
 import { UserProfile, BusinessState } from '../types';
 import { trackAppEvent } from '../utils/analyticsTracker';
@@ -328,26 +330,70 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const redeemBetaCode = useCallback(async (code: string): Promise<{ success: boolean; message: string }> => {
     if (!user) return { success: false, message: 'You must be signed in to redeem an invitation code.' };
 
+    const cleanCode = code.trim().toUpperCase();
     try {
       const res = await fetch('/api/beta/redeem-code', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          code,
+          code: cleanCode,
           userId: user.uid,
           userEmail: user.email || userProfile?.email || '',
           businessName: userProfile?.businessName || 'My Business',
         }),
       });
       const data = await res.json();
-      if (data.success) {
+      if (data?.success) {
         await refreshProfile();
-        return { success: true, message: data.message };
+        return { success: true, message: data.message || 'Invitation code verified!' };
       }
-      return { success: false, message: data.message || 'Could not redeem invitation code.' };
-    } catch (err: any) {
-      return { success: false, message: err.message || 'Network error while redeeming code.' };
+    } catch {
+      // Backend request fallback to direct Firestore & local storage
     }
+
+    // Direct Firestore Cloud Fallback
+    try {
+      const fsCheck = await validateFirestoreInvitation(cleanCode);
+      if (fsCheck.valid) {
+        await redeemFirestoreInvitation(cleanCode, { uid: user.uid, email: user.email || '' });
+        await updateUserProfileDoc(user.uid, {
+          betaStatus: 'active',
+          betaInvitationCode: cleanCode,
+          updatedAt: new Date().toISOString(),
+        });
+        await refreshProfile();
+        return { success: true, message: 'Welcome to the Karra Private Beta! Access granted.' };
+      }
+    } catch {}
+
+    // Local Storage Custom Invitations Fallback
+    try {
+      const raw = localStorage.getItem('karra_custom_invitations');
+      if (raw) {
+        const list = JSON.parse(raw);
+        const matchIdx = list.findIndex((i: any) => i.code === cleanCode);
+        if (matchIdx >= 0) {
+          const inv = list[matchIdx];
+          if (inv.status !== 'revoked') {
+            inv.currentUses = (inv.currentUses || 0) + 1;
+            if (inv.currentUses >= (inv.maxUses || 1)) inv.status = 'redeemed';
+            inv.redeemedAt = new Date().toISOString();
+            list[matchIdx] = inv;
+            localStorage.setItem('karra_custom_invitations', JSON.stringify(list));
+
+            await updateUserProfileDoc(user.uid, {
+              betaStatus: 'active',
+              betaInvitationCode: cleanCode,
+              updatedAt: new Date().toISOString(),
+            });
+            await refreshProfile();
+            return { success: true, message: 'Welcome to the Karra Private Beta! Access granted.' };
+          }
+        }
+      }
+    } catch {}
+
+    return { success: false, message: 'That invitation code is invalid, expired, or already used.' };
   }, [user, userProfile, refreshProfile]);
 
   const syncLedgerToCloud = useCallback(

@@ -31,7 +31,7 @@ import {
   limit,
   orderBy,
 } from 'firebase/firestore';
-import { BusinessState, UserProfile } from '../types';
+import { BusinessState, UserProfile, BetaInvitation } from '../types';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase App
@@ -637,12 +637,116 @@ export async function fetchAdminFirestoreEvents(limitCount = 500): Promise<any[]
 /**
  * Admin: Fetch Firestore invitations
  */
-export async function fetchAdminFirestoreInvitations(): Promise<any[]> {
+export async function fetchAdminFirestoreInvitations(): Promise<BetaInvitation[]> {
   try {
     const snap = await getDocs(collection(db, 'beta_invitations'));
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    return snap.docs.map(d => ({ id: d.id, ...d.data() } as BetaInvitation));
   } catch {
     return [];
+  }
+}
+
+/**
+ * Admin: Save or update invitation in Firestore
+ */
+export async function saveAdminFirestoreInvitation(invitation: BetaInvitation): Promise<boolean> {
+  try {
+    const cleanCode = (invitation.code || '').trim().toUpperCase();
+    if (!cleanCode) return false;
+    const docRef = doc(db, 'beta_invitations', cleanCode);
+    await setDoc(docRef, {
+      ...invitation,
+      code: cleanCode,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+    return true;
+  } catch (err) {
+    console.warn('Could not save invitation to Firestore:', err);
+    return false;
+  }
+}
+
+/**
+ * Admin: Revoke invitation in Firestore
+ */
+export async function revokeAdminFirestoreInvitation(rawCode: string): Promise<boolean> {
+  try {
+    const cleanCode = rawCode.trim().toUpperCase();
+    if (!cleanCode) return false;
+    const docRef = doc(db, 'beta_invitations', cleanCode);
+    await updateDoc(docRef, { status: 'revoked', updatedAt: new Date().toISOString() });
+    return true;
+  } catch (err) {
+    console.warn('Could not revoke invitation in Firestore:', err);
+    return false;
+  }
+}
+
+/**
+ * Public: Validate invitation code against Firestore
+ */
+export async function validateFirestoreInvitation(rawCode: string): Promise<{
+  valid: boolean;
+  reason?: 'INVALID' | 'EXPIRED' | 'ALREADY_USED' | 'REVOKED';
+  message: string;
+  invitation?: BetaInvitation;
+}> {
+  try {
+    const cleanCode = rawCode.trim().toUpperCase();
+    if (!cleanCode) {
+      return { valid: false, reason: 'INVALID', message: 'Please enter your invitation code.' };
+    }
+    const docRef = doc(db, 'beta_invitations', cleanCode);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      return { valid: false, reason: 'INVALID', message: "That invitation code wasn't found." };
+    }
+    const inv = snap.data() as BetaInvitation;
+    if (inv.status === 'revoked') {
+      return { valid: false, reason: 'REVOKED', message: 'This invitation code has been revoked.' };
+    }
+    if (inv.expiresAt && new Date(inv.expiresAt).getTime() < Date.now()) {
+      return { valid: false, reason: 'EXPIRED', message: 'This invitation code has expired.' };
+    }
+    if (inv.maxUses && (inv.currentUses || 0) >= inv.maxUses) {
+      return { valid: false, reason: 'ALREADY_USED', message: 'This invitation code has already reached its maximum redemption limit.' };
+    }
+    return { valid: true, message: 'Invitation code verified!', invitation: inv };
+  } catch (err) {
+    return { valid: false, message: 'Could not connect to cloud to verify code.' };
+  }
+}
+
+/**
+ * Public/Auth: Redeem invitation code in Firestore
+ */
+export async function redeemFirestoreInvitation(
+  rawCode: string,
+  user: { uid?: string; email?: string }
+): Promise<boolean> {
+  try {
+    const cleanCode = rawCode.trim().toUpperCase();
+    if (!cleanCode) return false;
+    const docRef = doc(db, 'beta_invitations', cleanCode);
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) return false;
+    const inv = snap.data() as BetaInvitation;
+    const currentUses = (inv.currentUses || 0) + 1;
+    const maxUses = inv.maxUses || 1;
+    const status = currentUses >= maxUses ? 'redeemed' : 'active';
+    const usedBy = Array.isArray(inv.usedBy)
+      ? [...inv.usedBy, user.email || user.uid || 'user']
+      : [user.email || user.uid || 'user'];
+    await updateDoc(docRef, {
+      currentUses,
+      status,
+      usedBy,
+      redeemedAt: new Date().toISOString(),
+    });
+    return true;
+  } catch (err) {
+    console.warn('Could not redeem invitation in Firestore:', err);
+    return false;
   }
 }
 

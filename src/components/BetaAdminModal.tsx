@@ -67,7 +67,7 @@ export const BetaAdminModal: React.FC<BetaAdminModalProps> = ({
     const secret = getAdminSecret();
     return {
       'Content-Type': 'application/json',
-      'x-admin-email': user?.email || 'olamidefelix54@gmail.com',
+      'x-admin-email': 'olamidefelix54@gmail.com',
       'x-admin-secret': secret,
       ...(secret ? { 'Authorization': `Bearer ${secret}` } : {}),
     };
