@@ -8,3 +8,17 @@
   touch-action: pan-y;
   overscroll-behavior-y: contain;
 }
+
+.touch-scroll-x {
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

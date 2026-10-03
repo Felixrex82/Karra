@@ -23,6 +23,12 @@ import {
   Calendar,
   Plus,
   MoreVertical,
+  TrendingUp,
+  Receipt,
+  Wallet,
+  DollarSign,
+  Users,
+  ShoppingBag,
 } from 'lucide-react';
 import { KarraLogo } from './KarraLogo';
 import { BusinessState, ChatMessage, MemoryUpdateItem, BusinessEvent } from '../types';
@@ -58,6 +64,9 @@ interface ConversationalQuestionsProps {
   onUpdateChatHistory: (messages: ChatMessage[]) => void;
   onNavigateTab?: (tab: string) => void;
   onSelectCalendarDate?: (date: string) => void;
+  onOpenRecordSale?: () => void;
+  onOpenRecordExpense?: () => void;
+  onOpenAddCustomer?: () => void;
 }
 
 export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = ({
@@ -66,6 +75,9 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
   onUpdateChatHistory,
   onNavigateTab,
   onSelectCalendarDate,
+  onOpenRecordSale,
+  onOpenRecordExpense,
+  onOpenAddCustomer,
 }) => {
   const initialThread: ChatMessage[] =
     state.chatHistory && state.chatHistory.length > 0
@@ -709,16 +721,26 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
   const totalCustomerNotes = state.customers.filter((c) => c.notes).length;
   const totalRules = (state.businessRules || state.rules || []).length;
 
+  const QUICK_PROMPT_CHIPS = [
+    { label: '💰 Who owes me?', q: 'Who owes me money?' },
+    { label: '📊 Today\'s sales', q: 'How much did I sell today?' },
+    { label: '💸 Top expenses', q: 'What did I spend the most money on?' },
+    { label: '🏆 Most profitable', q: 'Which product makes me the most profit?' },
+    { label: '💵 Cash at hand', q: 'How much cash should I have at hand?' },
+    { label: '📅 Sales this week', q: 'What are my total sales this week?' },
+    { label: '👥 Debt breakdown', q: 'Show breakdown of all customer debts' },
+  ];
+
   return (
-    <div className="flex-1 flex flex-col h-full min-h-0 bg-slate-50 dark:bg-[#061026] text-slate-900 dark:text-slate-100 overflow-hidden relative font-sans">
-      {/* 1. TOP HEADER (Matching Reference Screenshot) */}
-      <div className="shrink-0 px-3.5 sm:px-5 py-3 border-b border-slate-200 dark:border-[#0d2238] bg-white/95 dark:bg-[#061026]/95 backdrop-blur-md flex items-center justify-between z-20">
-        <div className="flex items-center space-x-3 min-w-0">
+    <div className="flex-1 flex flex-col min-h-0 w-full bg-slate-50 dark:bg-[#061026] text-slate-900 dark:text-slate-100 overflow-hidden relative font-sans">
+      {/* 1. TOP HEADER (Responsive Mobile-First Header) */}
+      <div className="shrink-0 px-3 sm:px-5 py-2.5 sm:py-3 border-b border-slate-200/80 dark:border-[#0d2238] bg-white/95 dark:bg-[#061026]/95 backdrop-blur-md flex items-center justify-between z-20">
+        <div className="flex items-center space-x-2 sm:space-x-3 min-w-0">
           {onNavigateTab && (
             <button
               type="button"
               onClick={() => onNavigateTab('dashboard')}
-              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-slate-100 dark:bg-[#112437] hover:bg-slate-200 dark:hover:bg-[#18314a] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#162e49] flex items-center justify-center shrink-0 cursor-pointer shadow-xs transition-colors"
+              className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-slate-100 dark:bg-[#112437] hover:bg-slate-200 dark:hover:bg-[#18314a] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white border border-slate-200 dark:border-[#162e49] flex items-center justify-center shrink-0 cursor-pointer shadow-2xs transition-colors active:scale-95"
               title="Back to Dashboard"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -730,17 +752,17 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
           </div>
 
           <div className="min-w-0">
-            <h1 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white tracking-tight leading-snug">
+            <h1 className="text-sm sm:text-base font-bold text-slate-900 dark:text-white tracking-tight leading-snug truncate">
               Ask Karra
             </h1>
-            <p className="text-xs text-slate-500 dark:text-slate-400 font-normal leading-none mt-0.5">
+            <p className="text-[10px] sm:text-xs text-slate-500 dark:text-slate-400 font-normal leading-none mt-0.5 truncate">
               Your business assistant
             </p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-2 shrink-0 relative">
-          <div className="bg-emerald-50 dark:bg-[#04241d] border border-emerald-200 dark:border-[#093e32] text-emerald-700 dark:text-emerald-400 px-3 py-1 rounded-full text-xs font-semibold flex items-center gap-1.5 shadow-xs">
+        <div className="flex items-center space-x-1.5 sm:space-x-2 shrink-0 relative">
+          <div className="bg-emerald-50 dark:bg-[#04241d] border border-emerald-200 dark:border-[#093e32] text-emerald-700 dark:text-emerald-400 px-2 sm:px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-semibold flex items-center gap-1.5 shadow-2xs">
             <span className="w-2 h-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
             <span>Active</span>
           </div>
@@ -748,55 +770,61 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
           <button
             type="button"
             onClick={() => setShowMenuDropdown(!showMenuDropdown)}
-            className="w-9 h-9 rounded-full bg-slate-100 dark:bg-transparent hover:bg-slate-200 dark:hover:bg-[#112437] border border-slate-200 dark:border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors"
+            className="w-9 h-9 rounded-full bg-slate-100 dark:bg-transparent hover:bg-slate-200 dark:hover:bg-[#112437] border border-slate-200 dark:border-transparent text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors active:scale-95"
             title="Options"
           >
-            <MoreVertical className="w-5 h-5" />
+            <MoreVertical className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
 
           {/* Options Dropdown Menu */}
           {showMenuDropdown && (
-            <div className="absolute right-0 top-full mt-2 w-52 bg-white dark:bg-[#0b1b2d] border border-slate-200 dark:border-[#142c46] rounded-2xl p-2 shadow-2xl z-50 space-y-1 animate-in fade-in">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowMenuDropdown(false);
-                  handleClearThread();
-                }}
-                className="w-full text-left px-3 py-2 rounded-xl text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#12283e] flex items-center space-x-2 cursor-pointer transition-colors"
-              >
-                <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
-                <span>Reset Conversation</span>
-              </button>
-
-              {sessionMemories.length > 0 && (
+            <>
+              <div
+                className="fixed inset-0 z-40 bg-transparent"
+                onClick={() => setShowMenuDropdown(false)}
+              />
+              <div className="absolute right-0 top-full mt-2 w-56 max-w-[calc(100vw-1.5rem)] bg-white dark:bg-[#0b1b2d] border border-slate-200 dark:border-[#142c46] rounded-2xl p-1.5 shadow-2xl z-50 space-y-1 animate-in fade-in">
                 <button
                   type="button"
                   onClick={() => {
                     setShowMenuDropdown(false);
-                    setShowMemoriesVault(true);
-                  }}
-                  className="w-full text-left px-3 py-2 rounded-xl text-xs text-emerald-600 dark:text-emerald-400 hover:bg-slate-100 dark:hover:bg-[#12283e] flex items-center space-x-2 cursor-pointer transition-colors"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  <span>Saved Memories ({sessionMemories.length})</span>
-                </button>
-              )}
-
-              {onNavigateTab && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMenuDropdown(false);
-                    onNavigateTab('memory');
+                    handleClearThread();
                   }}
                   className="w-full text-left px-3 py-2 rounded-xl text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#12283e] flex items-center space-x-2 cursor-pointer transition-colors"
                 >
-                  <Database className="w-3.5 h-3.5 text-slate-400" />
-                  <span>View Memory Bank</span>
+                  <RotateCcw className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Reset Conversation</span>
                 </button>
-              )}
-            </div>
+
+                {sessionMemories.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenuDropdown(false);
+                      setShowMemoriesVault(true);
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs text-emerald-600 dark:text-emerald-400 hover:bg-slate-100 dark:hover:bg-[#12283e] flex items-center space-x-2 cursor-pointer transition-colors"
+                  >
+                    <Sparkles className="w-3.5 h-3.5" />
+                    <span>Saved Memories ({sessionMemories.length})</span>
+                  </button>
+                )}
+
+                {onNavigateTab && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowMenuDropdown(false);
+                      onNavigateTab('memory');
+                    }}
+                    className="w-full text-left px-3 py-2 rounded-xl text-xs text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-[#12283e] flex items-center space-x-2 cursor-pointer transition-colors"
+                  >
+                    <Database className="w-3.5 h-3.5 text-slate-400" />
+                    <span>View Memory Bank</span>
+                  </button>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -844,15 +872,15 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
       <div
         ref={messagesContainerRef}
         onScroll={handleScroll}
-        className="flex-1 min-h-0 overflow-y-auto px-3.5 sm:px-4 py-3 sm:py-4 space-y-4 scrollbar-thin bg-transparent"
+        className="flex-1 min-h-0 overflow-y-auto px-3 sm:px-4 py-3 sm:py-4 space-y-3.5 sm:space-y-4 touch-scroll-y overscroll-contain scrollbar-thin bg-transparent"
         style={{ WebkitOverflowScrolling: 'touch' }}
       >
-        {messages.map((m) => {
+        {messages.map((m, mIdx) => {
           const isUser = m.sender === 'user';
           if (isUser) {
             return (
               <div key={m.id} className="flex justify-end animate-in fade-in duration-200">
-                <div className="max-w-[85%] sm:max-w-[75%] bg-[#065b43] text-white rounded-2xl rounded-tr-xs p-3.5 text-xs sm:text-sm font-medium shadow-xs leading-relaxed">
+                <div className="max-w-[85%] sm:max-w-[75%] bg-[#065b43] text-white rounded-2xl rounded-tr-xs px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm font-medium shadow-2xs leading-relaxed break-words">
                   <p className="whitespace-pre-wrap">{m.text}</p>
                   <div className="flex items-center justify-end space-x-1 text-[10px] text-emerald-200/90 mt-1">
                     <span>{m.timestamp}</span>
@@ -866,13 +894,40 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
           return (
             <div
               key={m.id}
-              className="flex items-start space-x-2.5 max-w-[92%] sm:max-w-[85%] animate-in fade-in duration-200"
+              className="flex items-start space-x-2 sm:space-x-2.5 max-w-[96%] sm:max-w-[85%] animate-in fade-in duration-200"
             >
-              <div className="w-8 h-8 rounded-xl bg-[#084b3e] text-emerald-300 flex items-center justify-center shrink-0 mt-0.5 shadow-xs">
+              <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-[#084b3e] text-emerald-300 flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
                 <KarraLogo size="sm" variant="green-bg" />
               </div>
-              <div className="flex-1 bg-white dark:bg-[#0d2238] border border-slate-200 dark:border-[#16314d] text-slate-800 dark:text-slate-100 rounded-2xl rounded-tl-xs p-3.5 sm:p-4 text-xs sm:text-sm leading-relaxed shadow-xs">
-                <p className="whitespace-pre-wrap">{m.text}</p>
+              <div className="flex-1 min-w-0 bg-white dark:bg-[#0d2238] border border-slate-200 dark:border-[#16314d] text-slate-800 dark:text-slate-100 rounded-2xl rounded-tl-xs p-3 sm:p-4 text-xs sm:text-sm leading-relaxed shadow-2xs break-words overflow-hidden">
+                <p className="whitespace-pre-wrap leading-relaxed">{m.text}</p>
+
+                {/* Quick Starter Suggestions for New Conversation / Mobile users */}
+                {mIdx === 0 && messages.length <= 2 && (
+                  <div className="mt-3 pt-3 border-t border-slate-100 dark:border-[#16314d] space-y-2">
+                    <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 block">
+                      Quick questions you can ask:
+                    </span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {[
+                        { label: '💰 Who owes me money?', q: 'Who owes me money?' },
+                        { label: '📊 How much did I sell today?', q: 'How much did I sell today?' },
+                        { label: '💸 What did I spend on?', q: 'What did I spend money on?' },
+                        { label: '🏆 Which product made most profit?', q: 'Which product makes me the most profit?' },
+                      ].map((chip, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => handleAsk(chip.q)}
+                          className="text-left text-xs p-2 sm:p-2.5 rounded-xl bg-slate-50 dark:bg-[#071d33] hover:bg-emerald-50 dark:hover:bg-[#09292b] border border-slate-200 dark:border-[#0e355c] hover:border-emerald-300 dark:hover:border-[#0e5c54] text-slate-700 dark:text-slate-200 transition-all cursor-pointer shadow-2xs active:scale-[0.98] flex items-center justify-between group"
+                        >
+                          <span className="truncate">{chip.label}</span>
+                          <ArrowRight className="w-3 h-3 text-slate-400 group-hover:text-emerald-500 group-hover:translate-x-0.5 transition-transform shrink-0 ml-1.5" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* If memory was saved */}
                 {m.memorySaved && m.memorySaved.length > 0 && (
@@ -882,9 +937,9 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
                       return (
                         <div
                           key={idx}
-                          className="p-2.5 rounded-xl bg-emerald-50 dark:bg-[#082a2b] border border-emerald-200 dark:border-[#0d4f4e] text-emerald-800 dark:text-emerald-200 text-xs space-y-1"
+                          className="p-2 sm:p-2.5 rounded-xl bg-emerald-50 dark:bg-[#082a2b] border border-emerald-200 dark:border-[#0d4f4e] text-emerald-800 dark:text-emerald-200 text-xs space-y-1"
                         >
-                          <div className="flex items-center justify-between gap-1.5">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                             <div className="flex items-center space-x-1.5 min-w-0">
                               <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                               <span className="font-bold text-[11px] truncate">
@@ -895,7 +950,7 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
                               <button
                                 type="button"
                                 onClick={() => onNavigateTab('memory')}
-                                className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 underline shrink-0 whitespace-nowrap cursor-pointer"
+                                className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:text-emerald-700 dark:hover:text-emerald-300 underline shrink-0 whitespace-nowrap cursor-pointer self-start sm:self-auto py-0.5 active:opacity-75"
                               >
                                 View Memory →
                               </button>
@@ -911,8 +966,8 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
                 {(m.recordedEvent || m.correctedEvent) && (() => {
                   const ev = ensureEventHeadlineAndSummary(m.recordedEvent || m.correctedEvent!);
                   return (
-                    <div className="mt-2.5 p-2.5 rounded-xl bg-slate-50 dark:bg-[#071d33] border border-slate-200 dark:border-[#0e355c] text-xs space-y-1">
-                      <div className="flex items-center justify-between gap-1.5">
+                    <div className="mt-2.5 p-2 sm:p-2.5 rounded-xl bg-slate-50 dark:bg-[#071d33] border border-slate-200 dark:border-[#0e355c] text-xs space-y-1">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                         <div className="flex items-center space-x-1.5 min-w-0">
                           <Sparkles className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
                           <span className="font-bold text-slate-900 dark:text-white truncate text-xs">
@@ -923,7 +978,7 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
                           <button
                             type="button"
                             onClick={() => onNavigateTab('timeline')}
-                            className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline shrink-0 cursor-pointer"
+                            className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline shrink-0 cursor-pointer self-start sm:self-auto py-0.5 active:opacity-75"
                           >
                             Transactions →
                           </button>
@@ -939,8 +994,8 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
                 {/* Calendar / Ledger Sync Badge */}
                 {(m.calendarUpdatedDate || m.actionBadge) && (
                   <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-[#16314d]">
-                    <div className="flex items-center justify-between p-2 rounded-xl bg-sky-50 dark:bg-[#081e36] border border-sky-200 dark:border-[#0f3b6a] text-sky-800 dark:text-sky-200 text-xs gap-2">
-                      <div className="flex items-center space-x-2 min-w-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between p-2 rounded-xl bg-sky-50 dark:bg-[#081e36] border border-sky-200 dark:border-[#0f3b6a] text-sky-800 dark:text-sky-200 text-xs gap-1.5">
+                      <div className="flex items-center space-x-1.5 min-w-0">
                         <Calendar className="w-3.5 h-3.5 text-sky-600 dark:text-sky-400 shrink-0" />
                         <span className="font-bold text-[11px] uppercase tracking-wider text-sky-700 dark:text-sky-300 shrink-0">
                           {m.actionBadge || 'Calendar Synced:'}
@@ -958,7 +1013,7 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
                             }
                             onNavigateTab('calendar');
                           }}
-                          className="text-[11px] font-bold text-sky-600 dark:text-sky-400 underline shrink-0 whitespace-nowrap cursor-pointer"
+                          className="text-[11px] font-bold text-sky-600 dark:text-sky-400 underline shrink-0 whitespace-nowrap cursor-pointer self-start sm:self-auto py-0.5 active:opacity-75"
                         >
                           View Calendar →
                         </button>
@@ -967,7 +1022,7 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
                   </div>
                 )}
 
-                <span className="text-[11px] text-slate-400 dark:text-slate-400 mt-2 block font-normal">
+                <span className="text-[10px] sm:text-[11px] text-slate-400 dark:text-slate-400 mt-2 block font-normal">
                   Karra • {m.timestamp}
                 </span>
               </div>
@@ -976,11 +1031,11 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         })}
 
         {isLoading && (
-          <div className="flex items-start space-x-2.5 max-w-[92%] animate-in fade-in">
-            <div className="w-8 h-8 rounded-xl bg-[#084b3e] text-emerald-300 flex items-center justify-center shrink-0 mt-0.5">
+          <div className="flex items-start space-x-2 sm:space-x-2.5 max-w-[92%] animate-in fade-in">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-xl bg-[#084b3e] text-emerald-300 flex items-center justify-center shrink-0 mt-0.5 shadow-2xs">
               <KarraLogo size="sm" variant="green-bg" />
             </div>
-            <div className="bg-white dark:bg-[#0d2238] border border-slate-200 dark:border-[#16314d] text-slate-600 dark:text-slate-300 rounded-2xl rounded-tl-xs px-4 py-3 text-xs flex items-center space-x-2.5 shadow-xs">
+            <div className="bg-white dark:bg-[#0d2238] border border-slate-200 dark:border-[#16314d] text-slate-600 dark:text-slate-300 rounded-2xl rounded-tl-xs px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs flex items-center space-x-2.5 shadow-2xs">
               <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
               <span>Karra is thinking...</span>
             </div>
@@ -993,47 +1048,136 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         <button
           type="button"
           onClick={() => scrollToBottom('smooth')}
-          className="absolute bottom-20 right-4 sm:right-6 z-30 flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-[#059669] text-white text-xs font-semibold shadow-lg hover:bg-[#047857] transition-all animate-in fade-in slide-in-from-bottom-2 cursor-pointer"
+          className="absolute bottom-28 sm:bottom-28 right-3 sm:right-6 z-30 flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-[#059669] text-white text-[11px] sm:text-xs font-semibold shadow-lg hover:bg-[#047857] transition-all animate-in fade-in slide-in-from-bottom-2 active:scale-95 cursor-pointer"
         >
           <ArrowDown className="w-3.5 h-3.5 animate-bounce" />
           <span>Latest messages</span>
         </button>
       )}
 
-      {/* 4. BOTTOM INPUT FIELD (Matching Reference Screenshot 100%) */}
-      <div className="shrink-0 p-3 sm:p-4 bg-white dark:bg-[#061026] border-t border-slate-200 dark:border-[#0d2238]">
-        {/* Quick prompt popup when '+' is clicked */}
+      {/* Horizontal Quick Suggestions Bar (Mobile-friendly thumb shortcuts) */}
+      <div className="shrink-0 px-2.5 sm:px-4 py-1.5 bg-slate-50/90 dark:bg-[#061026]/90 border-t border-slate-200/60 dark:border-[#0d2238]/60 overflow-x-auto no-scrollbar touch-scroll-x flex items-center space-x-1.5 z-10">
+        {QUICK_PROMPT_CHIPS.map((chip, idx) => (
+          <button
+            key={idx}
+            type="button"
+            onClick={() => handleAsk(chip.q)}
+            className="shrink-0 px-2.5 py-1 rounded-full text-[11px] sm:text-xs font-semibold bg-white dark:bg-[#0c1f33] hover:bg-emerald-50 dark:hover:bg-[#0a2928] text-slate-700 dark:text-slate-200 border border-slate-200/90 dark:border-[#14324f] hover:border-emerald-300 dark:hover:border-emerald-600 transition-all cursor-pointer shadow-2xs active:scale-95 flex items-center space-x-1 whitespace-nowrap"
+          >
+            <span>{chip.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* 4. BOTTOM INPUT FIELD (Mobile-optimized input area) */}
+      <div className="shrink-0 p-2.5 sm:p-3.5 bg-white dark:bg-[#061026] border-t border-slate-200 dark:border-[#0d2238] z-20">
+        {/* Quick Actions & Prompts Bottom Sheet / Modal */}
         {showQuickPrompts && (
-          <div className="mb-2.5 p-3 rounded-2xl bg-white dark:bg-[#091829] border border-slate-200 dark:border-[#142c46] shadow-xl space-y-2 animate-in fade-in slide-in-from-bottom-2">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-800 dark:text-slate-300">Quick Prompt Ideas</span>
-              <button
-                type="button"
-                onClick={() => setShowQuickPrompts(false)}
-                className="text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-1">
-              {[
-                { label: 'Who owes me money?', q: 'Who owes me money?' },
-                { label: 'How much did I sell today?', q: 'How much did I sell today?' },
-                { label: 'What did I spend the most on?', q: 'What did I spend the most money on?' },
-                { label: 'Which product made most profit?', q: 'Which product makes me the most profit?' },
-              ].map((qp, idx) => (
+          <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 bg-black/50 backdrop-blur-xs animate-in fade-in">
+            <div
+              className="fixed inset-0"
+              onClick={() => setShowQuickPrompts(false)}
+            />
+            <div className="relative w-full sm:max-w-lg bg-white dark:bg-[#091829] border-t sm:border border-slate-200 dark:border-[#142c46] rounded-t-3xl sm:rounded-2xl p-4 sm:p-5 shadow-2xl space-y-3 z-10 max-h-[85vh] overflow-y-auto animate-in slide-in-from-bottom duration-200">
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-[#142c46]">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Quick Actions & Prompts
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Tap to trigger actions or ask business questions instantly
+                  </p>
+                </div>
                 <button
-                  key={idx}
                   type="button"
-                  onClick={() => {
-                    setShowQuickPrompts(false);
-                    handleAsk(qp.q);
-                  }}
-                  className="text-left text-xs p-2 rounded-xl bg-slate-100 dark:bg-[#0d2238] hover:bg-slate-200 dark:hover:bg-[#122e4c] border border-slate-200 dark:border-[#16314d] text-slate-700 dark:text-slate-200 transition-colors cursor-pointer"
+                  onClick={() => setShowQuickPrompts(false)}
+                  className="w-8 h-8 rounded-full bg-slate-100 dark:bg-[#12283e] hover:bg-slate-200 dark:hover:bg-[#1a3857] text-slate-500 hover:text-slate-900 dark:hover:text-white flex items-center justify-center cursor-pointer transition-colors active:scale-95"
                 >
-                  {qp.label}
+                  <X className="w-4 h-4" />
                 </button>
-              ))}
+              </div>
+
+              {/* Quick Record Business Shortcuts */}
+              {(onOpenRecordSale || onOpenRecordExpense || onOpenAddCustomer) && (
+                <div className="space-y-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                    Record Transactions
+                  </span>
+                  <div className="grid grid-cols-3 gap-2">
+                    {onOpenRecordSale && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowQuickPrompts(false);
+                          onOpenRecordSale();
+                        }}
+                        className="flex flex-col items-center justify-center p-2.5 rounded-xl bg-emerald-50 dark:bg-[#072922] hover:bg-emerald-100 dark:hover:bg-[#0a3a30] border border-emerald-200 dark:border-[#0e4d41] text-emerald-800 dark:text-emerald-300 transition-all cursor-pointer active:scale-95 shadow-2xs"
+                      >
+                        <ShoppingBag className="w-4 h-4 mb-1 text-emerald-600 dark:text-emerald-400" />
+                        <span className="text-[11px] font-bold leading-tight">Record Sale</span>
+                      </button>
+                    )}
+                    {onOpenRecordExpense && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowQuickPrompts(false);
+                          onOpenRecordExpense();
+                        }}
+                        className="flex flex-col items-center justify-center p-2.5 rounded-xl bg-amber-50 dark:bg-[#2b1f09] hover:bg-amber-100 dark:hover:bg-[#3d2b0d] border border-amber-200 dark:border-[#573b13] text-amber-800 dark:text-amber-300 transition-all cursor-pointer active:scale-95 shadow-2xs"
+                      >
+                        <Receipt className="w-4 h-4 mb-1 text-amber-600 dark:text-amber-400" />
+                        <span className="text-[11px] font-bold leading-tight">Record Expense</span>
+                      </button>
+                    )}
+                    {onOpenAddCustomer && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowQuickPrompts(false);
+                          onOpenAddCustomer();
+                        }}
+                        className="flex flex-col items-center justify-center p-2.5 rounded-xl bg-indigo-50 dark:bg-[#161a33] hover:bg-indigo-100 dark:hover:bg-[#21274c] border border-indigo-200 dark:border-[#2f3869] text-indigo-800 dark:text-indigo-300 transition-all cursor-pointer active:scale-95 shadow-2xs"
+                      >
+                        <Users className="w-4 h-4 mb-1 text-indigo-600 dark:text-indigo-400" />
+                        <span className="text-[11px] font-bold leading-tight">Add Customer</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Instant Questions */}
+              <div className="space-y-1.5">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                  Ask About Finances & Intelligence
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {[
+                    { label: '💰 Who owes me money?', q: 'Who owes me money?' },
+                    { label: '📊 How much did I sell today?', q: 'How much did I sell today?' },
+                    { label: '💸 What did I spend the most on?', q: 'What did I spend the most money on?' },
+                    { label: '🏆 Which product made most profit?', q: 'Which product makes me the most profit?' },
+                    { label: '💵 How much cash should I have?', q: 'How much cash should I have at hand?' },
+                    { label: '📅 What are my sales this week?', q: 'What are my total sales this week?' },
+                    { label: '📈 What is my profit margin?', q: 'What is my current profit margin?' },
+                    { label: '👥 Show all customer debt breakdown', q: 'Show breakdown of all customer debts' },
+                  ].map((qp, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setShowQuickPrompts(false);
+                        handleAsk(qp.q);
+                      }}
+                      className="text-left text-xs p-2.5 rounded-xl bg-slate-50 dark:bg-[#0d2238] hover:bg-emerald-50 dark:hover:bg-[#122e4c] border border-slate-200 dark:border-[#16314d] hover:border-emerald-300 text-slate-800 dark:text-slate-200 transition-all cursor-pointer active:scale-[0.98] flex items-center justify-between"
+                    >
+                      <span className="truncate">{qp.label}</span>
+                      <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0 ml-1.5" />
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1043,27 +1187,39 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
             e.preventDefault();
             handleAsk(inputQuestion);
           }}
-          className="relative flex items-center space-x-2 bg-slate-100 dark:bg-[#091829] border border-slate-200 dark:border-[#142c46] rounded-2xl px-2 sm:px-2.5 py-1.5 sm:py-2 shadow-lg focus-within:border-emerald-500/70 transition-colors"
+          className="relative flex items-center gap-1.5 sm:gap-2 bg-slate-100 dark:bg-[#091829] border border-slate-200/90 dark:border-[#142c46] rounded-2xl px-2 sm:px-2.5 py-1.5 sm:py-2 shadow-xs focus-within:ring-2 focus-within:ring-emerald-500/30 focus-within:border-emerald-500/70 transition-all"
         >
           {/* Plus Button */}
           <button
             type="button"
             onClick={() => setShowQuickPrompts(!showQuickPrompts)}
-            className="w-9 h-9 rounded-full bg-slate-200 dark:bg-[#12283e] hover:bg-slate-300 dark:hover:bg-[#1a3857] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors shadow-xs"
-            title="Prompt Shortcuts"
+            className="w-9 h-9 rounded-full bg-slate-200/90 dark:bg-[#12283e] hover:bg-slate-300 dark:hover:bg-[#1a3857] text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white flex items-center justify-center shrink-0 cursor-pointer active:scale-90 transition-transform shadow-2xs"
+            title="Quick Actions & Prompts"
           >
             <Plus className="w-4 h-4" />
           </button>
 
-          {/* Text Input */}
+          {/* Text Input - 15px font on mobile prevents iOS Safari auto-zoom */}
           <input
             type="text"
             value={inputQuestion}
             onFocus={() => setTimeout(() => scrollToBottom('smooth'), 250)}
             onChange={(e) => setInputQuestion(e.target.value)}
-            placeholder="Ask about your business..."
-            className="flex-1 bg-transparent text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none px-2 min-h-[40px]"
+            placeholder="Ask Karra anything..."
+            className="flex-1 bg-transparent text-[15px] sm:text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none px-1.5 sm:px-2 min-h-[38px] sm:min-h-[40px]"
           />
+
+          {/* Clear text button */}
+          {inputQuestion && (
+            <button
+              type="button"
+              onClick={() => setInputQuestion('')}
+              className="w-6 h-6 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white flex items-center justify-center shrink-0 cursor-pointer transition-colors active:scale-90"
+              title="Clear input"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
 
           {/* Microphone Voice Button */}
           <button
@@ -1076,10 +1232,10 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
                 ? 'Listening... tap to finish'
                 : 'Tap to speak question'
             }
-            className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors shrink-0 cursor-pointer ${
+            className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 cursor-pointer active:scale-90 transition-transform ${
               isListening
                 ? 'bg-rose-600 text-white animate-pulse shadow-md ring-2 ring-rose-400'
-                : 'text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                : 'text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-200 dark:hover:bg-[#12283e]'
             }`}
           >
             <Mic className={`w-4 h-4 ${isListening ? 'animate-bounce' : ''}`} />
@@ -1089,7 +1245,7 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
           <button
             type="submit"
             disabled={!inputQuestion.trim() || isLoading}
-            className="w-9 h-9 rounded-full bg-[#059669] hover:bg-[#047857] disabled:opacity-40 disabled:hover:bg-[#059669] text-white flex items-center justify-center shrink-0 shadow-xs transition-colors cursor-pointer"
+            className="w-9 h-9 rounded-full bg-[#059669] hover:bg-[#047857] disabled:opacity-30 disabled:hover:bg-[#059669] text-white flex items-center justify-center shrink-0 shadow-xs active:scale-90 transition-transform cursor-pointer"
             title="Send Message"
           >
             <Send className="w-4 h-4" />
@@ -1097,10 +1253,10 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         </form>
 
         {isListening && (
-          <div className="mt-2 p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-800 dark:text-rose-200 font-medium flex items-center justify-between animate-in fade-in">
-            <div className="flex items-center space-x-2 truncate">
+          <div className="mt-2 p-2 sm:p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-800 dark:text-rose-200 font-medium flex items-center justify-between animate-in fade-in">
+            <div className="flex items-center space-x-2 truncate min-w-0">
               <span className="w-2.5 h-2.5 rounded-full bg-rose-600 animate-ping inline-block shrink-0" />
-              <span className="font-semibold text-rose-900 dark:text-rose-100">
+              <span className="font-semibold text-rose-900 dark:text-rose-100 truncate">
                 {interimTranscript ? `"${interimTranscript}"` : 'Listening... Speak naturally'}
               </span>
             </div>
@@ -1115,7 +1271,7 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
         )}
 
         {voiceError && !isListening && (
-          <div className="mt-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 flex items-center space-x-2 animate-in fade-in">
+          <div className="mt-2 p-2 sm:p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-xs text-amber-800 dark:text-amber-200 flex items-center space-x-2 animate-in fade-in">
             <span>{voiceError}</span>
           </div>
         )}

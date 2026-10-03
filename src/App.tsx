@@ -2248,7 +2248,7 @@ export default function App() {
       <main
         className={`flex-1 w-full mx-auto transition-all ${
           activeTab === 'questions'
-            ? 'max-w-5xl px-0 sm:px-4 pt-0 sm:pt-2 pb-[calc(3.75rem+env(safe-area-inset-bottom,0px))] md:pb-2 flex flex-col min-h-0 h-full overflow-hidden'
+            ? 'max-w-5xl px-0 sm:px-4 pt-0 sm:pt-2 pb-[calc(3.75rem+env(safe-area-inset-bottom,0px))] md:pb-2 flex flex-col min-h-0 flex-1 overflow-hidden'
             : 'max-w-6xl px-3.5 sm:px-6 py-4 sm:py-6 pb-24 md:pb-8 space-y-4 sm:space-y-6'
         }`}
       >
@@ -2338,7 +2338,7 @@ export default function App() {
 
         {/* Tab 5: CONVERSATIONAL QUESTIONS */}
         {activeTab === 'questions' && (
-          <div className="flex-1 flex flex-col min-h-0 h-full animate-in fade-in duration-200">
+          <div className="flex-1 flex flex-col min-h-0 w-full overflow-hidden animate-in fade-in duration-200">
             <ConversationalQuestions
               state={state}
               onApplyMemories={handleApplyChatMemories}
@@ -2348,6 +2348,9 @@ export default function App() {
                 setSelectedDate(date);
                 setActiveTab('calendar');
               }}
+              onOpenRecordSale={handleOpenRecordSale}
+              onOpenRecordExpense={handleOpenRecordExpense}
+              onOpenAddCustomer={handleOpenAddCustomer}
             />
           </div>
         )}
