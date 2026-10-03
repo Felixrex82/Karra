@@ -14,6 +14,7 @@ import {
   NIGHT_TEMPLATES,
   CONTEXTUAL_TEMPLATES,
 } from '../src/engine/notificationEngine';
+import { sendPushToUser } from './webPushService';
 
 interface NotificationStoreData {
   notifications: NotificationItem[];
@@ -173,6 +174,20 @@ export function createNotification(
     store.notifications = store.notifications.slice(0, 500);
   }
   persistStore();
+
+  // Send real background push notification to merchant's phone if push enabled
+  if (prefs.channels.browserPush) {
+    sendPushToUser(userId, {
+      title: params.title,
+      message: params.message,
+      category: params.category,
+      actionType: params.actionType,
+      actionLabel: params.actionLabel,
+    }).catch((err) => {
+      console.warn('[NotificationEngine] Background push dispatch note:', err?.message);
+    });
+  }
+
   return item;
 }
 

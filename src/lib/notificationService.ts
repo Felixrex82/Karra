@@ -66,6 +66,61 @@ export async function registerServiceWorker(): Promise<ServiceWorkerRegistration
   }
 }
 
+function urlBase64ToUint8Array(base64String: string) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+export async function subscribePhonePushNotifications(userId: string): Promise<boolean> {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return false;
+  }
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (!reg?.pushManager) return false;
+
+    // Check if already subscribed
+    let sub = await reg.pushManager.getSubscription();
+
+    if (!sub) {
+      // Fetch VAPID public key
+      const keyRes = await fetch('/api/push/vapid-public-key');
+      const keyData = await keyRes.json();
+      if (!keyData?.publicKey) return false;
+
+      const convertedKey = urlBase64ToUint8Array(keyData.publicKey);
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: convertedKey,
+      });
+    }
+
+    // Register subscription on backend
+    if (sub) {
+      await fetch('/api/push/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          subscription: sub.toJSON ? sub.toJSON() : sub,
+        }),
+      });
+      return true;
+    }
+    return false;
+  } catch (err) {
+    console.warn('[NotificationService] Push subscription registration notice:', err);
+    return false;
+  }
+}
+
 export async function requestBrowserNotificationPermission(): Promise<NotificationPermission> {
   if (typeof window === 'undefined' || !('Notification' in window)) {
     return 'denied';
@@ -174,12 +229,19 @@ export async function deliverNotification(
     saveStoredNotifications(updated, userId);
   }
 
-  // 2. Play subtle chime if enabled
+  // 2. Play subtle chime & trigger phone vibration if enabled
   if (prefs.soundEnabled) {
     playCalmNotificationChime();
   }
 
-  // 3. Dispatch Browser Push / Notification API if enabled & permitted
+  // Trigger native phone haptic vibration (WhatsApp signature rhythm)
+  if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+    try {
+      navigator.vibrate([150, 80, 150, 80, 250]);
+    } catch {}
+  }
+
+  // 3. Dispatch native Phone / Browser Push Notification if enabled & permitted
   if (
     prefs.channels.browserPush &&
     typeof window !== 'undefined' &&
@@ -188,26 +250,49 @@ export async function deliverNotification(
   ) {
     try {
       if ('serviceWorker' in navigator) {
+        // Send message to active Service Worker controller
+        if (navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage({
+            type: 'SHOW_PHONE_NOTIFICATION',
+            title: newItem.title,
+            message: newItem.message,
+            category: newItem.category,
+            actionType: newItem.actionType,
+            actionLabel: newItem.actionLabel,
+          });
+        }
+
         const reg = await navigator.serviceWorker.ready;
         if (reg && reg.showNotification) {
-          reg.showNotification(newItem.title, {
+          const swOptions: any = {
             body: newItem.message,
             icon: '/karra-logo.svg',
             badge: '/karra-logo.svg',
             tag: `karra-${newItem.category}`,
+            vibrate: [150, 80, 150, 80, 250],
+            renotify: true,
+            silent: false,
             data: {
               actionType: newItem.actionType,
               category: newItem.category,
             },
-          });
+            actions: [
+              {
+                action: 'open_action',
+                title: newItem.actionLabel || 'Open Karra',
+              },
+            ],
+          };
+          await reg.showNotification(newItem.title, swOptions);
           return newItem;
         }
       }
-      // Fallback
+      // Desktop / direct fallback
       new Notification(newItem.title, {
         body: newItem.message,
         icon: '/karra-logo.svg',
-      });
+        vibrate: [150, 80, 150, 80, 250],
+      } as any);
     } catch (err) {
       console.warn('[NotificationService] Browser notification delivery failed:', err);
     }

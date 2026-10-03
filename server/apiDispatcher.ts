@@ -40,6 +40,11 @@ import {
   sendTestNotification,
   getNotificationAnalytics,
 } from './notificationEngine';
+import {
+  getOrGenerateVapidKeys,
+  savePushSubscription,
+  sendPushToUser,
+} from './webPushService';
 
 export { FOUNDER_EMAIL };
 
@@ -966,6 +971,95 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
         success: true,
         notification,
         message: `Test ${type || 'morning'} notification dispatched successfully.`,
+      });
+    }
+
+    // N7. Web Push: Get VAPID Public Key for Phone Subscription
+    if (targetPath === 'push/vapid-public-key') {
+      const keys = getOrGenerateVapidKeys();
+      return sendJson(res, 200, {
+        success: true,
+        publicKey: keys.publicKey,
+      });
+    }
+
+    // N8. Web Push: Save Phone Push Subscription
+    if (targetPath === 'push/subscribe') {
+      if (method !== 'POST') {
+        return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
+      }
+      const { userId, subscription } = req.body || {};
+      if (!userId || !subscription || !subscription.endpoint) {
+        return sendJson(res, 400, {
+          success: false,
+          error: 'userId and valid PushSubscription are required.',
+        });
+      }
+      const userAgent = (req.headers?.['user-agent'] as string) || '';
+      savePushSubscription(userId, subscription, userAgent);
+
+      // Immediately send welcome confirmation push to the phone
+      sendPushToUser(userId, {
+        title: 'Karra Connected 🔔',
+        message: 'Phone notifications are active! You will receive gentle morning, daytime, and night check-ins.',
+        category: 'ONBOARDING_REMINDER',
+        actionType: 'CHAT_KARRA',
+        actionLabel: 'Open Karra',
+      }).catch((err) => {
+        console.warn('Initial push confirmation warning:', err?.message);
+      });
+
+      return sendJson(res, 200, {
+        success: true,
+        message: 'Phone push subscription active. Test confirmation sent.',
+      });
+    }
+
+    // N9. Web Push: Test Send Directly to Phone
+    if (targetPath === 'push/test-phone') {
+      if (method !== 'POST') {
+        return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
+      }
+      const { userId, type } = req.body || {};
+      if (!userId) {
+        return sendJson(res, 400, { success: false, error: 'userId is required.' });
+      }
+
+      let title = 'Good morning 👋';
+      let message = 'What’s happening in your business today? Tell Karra and let it keep track for you.';
+      let category = 'MORNING_REMINDER';
+      let actionType = 'CHAT_KARRA';
+      let actionLabel = 'Tell Karra';
+
+      if (type === 'day') {
+        title = 'Don’t let today’s business slip away.';
+        message = 'Made a sale, spent money, received stock, or collected a payment? Tell Karra now while you still remember.';
+        category = 'DAY_REMINDER';
+        actionType = 'RECORD_SALE';
+        actionLabel = 'Record Sale';
+      } else if (type === 'night') {
+        title = 'Before you call it a day…';
+        message = 'Take a moment to tell Karra what happened today. Record your sales, expenses, payments and other business activity.';
+        category = 'NIGHT_REMINDER';
+        actionType = 'RECORD_SALE';
+        actionLabel = 'Close the Day';
+      }
+
+      const result = await sendPushToUser(userId, {
+        title,
+        message,
+        category,
+        actionType,
+        actionLabel,
+      });
+
+      return sendJson(res, 200, {
+        success: true,
+        sent: result.sent,
+        failed: result.failed,
+        message: result.sent > 0
+          ? 'Push notification delivered to your phone!'
+          : 'No active phone subscription found for this user. Please enable phone push in the app first.',
       });
     }
 

@@ -23,11 +23,13 @@ import {
   requestBrowserNotificationPermission,
   getBrowserNotificationPermission,
   playCalmNotificationChime,
+  subscribePhonePushNotifications,
 } from '../../lib/notificationService';
 
 interface NotificationSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  userId?: string;
   preferences: NotificationPreferences;
   onSavePreferences: (updated: NotificationPreferences) => void;
   onSendTestNotification?: (type: 'morning' | 'day' | 'night' | 'first_use' | 'inactive') => void;
@@ -37,6 +39,7 @@ interface NotificationSettingsModalProps {
 export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps> = ({
   isOpen,
   onClose,
+  userId,
   preferences,
   onSavePreferences,
   onSendTestNotification,
@@ -45,11 +48,15 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
   const [localPrefs, setLocalPrefs] = useState<NotificationPreferences>(preferences);
   const [browserPermission, setBrowserPermission] = useState<NotificationPermission>('default');
   const [isRequestingPerm, setIsRequestingPerm] = useState(false);
-  const [testDropdownOpen, setTestDropdownOpen] = useState(false);
+  const [isIOS, setIsIOS] = useState(false);
 
   useEffect(() => {
     setLocalPrefs(preferences);
     setBrowserPermission(getBrowserNotificationPermission());
+    if (typeof window !== 'undefined') {
+      const isIOSDevice = /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
+      setIsIOS(isIOSDevice);
+    }
   }, [preferences, isOpen]);
 
   if (!isOpen) return null;
@@ -79,7 +86,17 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
           ...p,
           channels: { ...p.channels, browserPush: true },
         }));
-        if (onShowToast) onShowToast('Browser notifications enabled!', 'success');
+
+        if (userId) {
+          await subscribePhonePushNotifications(userId);
+        }
+
+        // Test-fire immediate confirmation on phone
+        if (onSendTestNotification) {
+          onSendTestNotification('morning');
+        }
+
+        if (onShowToast) onShowToast('Phone notifications enabled! Sent test to your phone screen.', 'success');
       } else if (res === 'denied') {
         if (onShowToast) {
           onShowToast(
@@ -189,23 +206,27 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
                 />
               </div>
 
-              {/* Browser Push */}
+              {/* Phone / Browser Push */}
               <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#122033] flex items-center justify-between">
                 <div className="flex items-center space-x-3">
-                  <Smartphone className="w-4 h-4 text-sky-500" />
+                  <Smartphone className="w-4 h-4 text-emerald-500" />
                   <div>
                     <div className="flex items-center space-x-1.5">
                       <p className="text-xs font-bold text-slate-900 dark:text-white">
-                        Browser Push
+                        Phone Push Notifications
                       </p>
-                      {browserPermission === 'granted' && (
+                      {browserPermission === 'granted' ? (
                         <span className="text-[9px] bg-emerald-500/10 text-emerald-500 font-bold px-1.5 py-0.2 rounded-sm">
-                          Allowed
+                          Active on Phone
+                        </span>
+                      ) : (
+                        <span className="text-[9px] bg-amber-500/10 text-amber-500 font-bold px-1.5 py-0.2 rounded-sm">
+                          Tap Enable
                         </span>
                       )}
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      When browser is backgrounded
+                      Alerts on phone lock screen (like WhatsApp)
                     </p>
                   </div>
                 </div>
@@ -225,17 +246,30 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
                   <button
                     onClick={handleRequestPush}
                     disabled={isRequestingPerm}
-                    className="text-xs font-semibold px-2 py-1 bg-sky-500/10 text-sky-600 dark:text-sky-400 hover:bg-sky-500/20 rounded-lg transition-colors cursor-pointer"
+                    className="text-xs font-bold px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-colors cursor-pointer shadow-xs flex items-center space-x-1"
                   >
                     {isRequestingPerm ? (
                       <Loader2 className="w-3.5 h-3.5 animate-spin" />
                     ) : (
-                      'Enable'
+                      <span>Enable on Phone</span>
                     )}
                   </button>
                 )}
               </div>
             </div>
+
+            {/* iOS Safari Guided Helper if on iPhone */}
+            {isIOS && browserPermission !== 'granted' && (
+              <div className="p-3 rounded-xl bg-sky-500/10 border border-sky-500/20 text-xs text-sky-900 dark:text-sky-300 flex items-start space-x-2">
+                <Info className="w-4 h-4 text-sky-500 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold">iPhone / iPad Lock Screen Notifications:</p>
+                  <p className="text-[11px] text-sky-800 dark:text-sky-300/90 mt-0.5">
+                    To receive notifications on your iPhone lock screen: Tap the Safari <strong>Share</strong> button, then tap <strong>Add to Home Screen</strong>. Open Karra from your home screen and enable notifications.
+                  </p>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 3 Natural Reminder Windows */}
@@ -522,31 +556,41 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
               <div className="flex flex-wrap gap-2 pt-1">
                 <button
                   type="button"
+                  onClick={() => {
+                    if (onSendTestNotification) onSendTestNotification('morning');
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-500 shadow-xs cursor-pointer flex items-center space-x-1.5"
+                >
+                  <Smartphone className="w-3.5 h-3.5" />
+                  <span>Test Phone Notification 🔔</span>
+                </button>
+                <button
+                  type="button"
                   onClick={() => onSendTestNotification('morning')}
                   className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 cursor-pointer"
                 >
-                  Test Morning 👋
+                  Morning 👋
                 </button>
                 <button
                   type="button"
                   onClick={() => onSendTestNotification('day')}
                   className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 cursor-pointer"
                 >
-                  Test Daytime ☀️
+                  Daytime ☀️
                 </button>
                 <button
                   type="button"
                   onClick={() => onSendTestNotification('night')}
                   className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 cursor-pointer"
                 >
-                  Test Night 🌙
+                  Night 🌙
                 </button>
                 <button
                   type="button"
                   onClick={() => onSendTestNotification('first_use')}
                   className="px-2.5 py-1 text-xs font-medium rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 cursor-pointer"
                 >
-                  Test First-Use ✨
+                  First-Use ✨
                 </button>
               </div>
             </div>

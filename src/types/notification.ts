@@ -64,6 +64,7 @@ export interface NotificationPreferences {
   timezone: string; // e.g. "Africa/Lagos"
   suppressWhenRecentlyActive: boolean; // default true (active within 60 mins)
   soundEnabled: boolean;
+  vibrationEnabled: boolean;
 }
 
 export interface NotificationEvaluationContext {
@@ -135,4 +136,5 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   timezone: 'Africa/Lagos',
   suppressWhenRecentlyActive: true,
   soundEnabled: true,
+  vibrationEnabled: true,
 };

@@ -59,6 +59,8 @@ import { ActionDraftBar, ActionType } from './components/actions/ActionDraftBar'
 import { executeBusinessAction } from './engine/businessEngine';
 import { NotificationCenter } from './components/notifications/NotificationCenter';
 import { NotificationSettingsModal } from './components/notifications/NotificationSettingsModal';
+import { PhoneNotificationBanner } from './components/notifications/PhoneNotificationBanner';
+import { PhoneNotificationOptInBanner } from './components/notifications/PhoneNotificationOptInBanner';
 import {
   NotificationItem,
   NotificationPreferences,
@@ -179,6 +181,7 @@ export default function App() {
     useState<NotificationPreferences>(DEFAULT_NOTIFICATION_PREFERENCES);
   const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
   const [isNotificationSettingsOpen, setIsNotificationSettingsOpen] = useState(false);
+  const [activePhoneBanner, setActivePhoneBanner] = useState<NotificationItem | null>(null);
 
   // Initialize service worker, permissions and notification listeners
   useEffect(() => {
@@ -315,6 +318,13 @@ export default function App() {
   ) => {
     const uid = user?.uid || 'merchant';
     try {
+      // Send background push to phone
+      fetch('/api/push/test-phone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: uid, type }),
+      }).catch(() => {});
+
       const res = await fetch('/api/notifications/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -328,7 +338,8 @@ export default function App() {
           notificationPreferences
         );
         setNotifications((prev) => [delivered, ...prev]);
-        showToast(data.message || `Test ${type} reminder dispatched.`, 'success');
+        setActivePhoneBanner(delivered);
+        showToast(data.message || `Test ${type} reminder dispatched to your phone.`, 'success');
         return;
       }
     } catch {}
@@ -361,7 +372,8 @@ export default function App() {
       notificationPreferences
     );
     setNotifications((prev) => [fallback, ...prev]);
-    showToast(`Test ${type} reminder dispatched.`, 'success');
+    setActivePhoneBanner(fallback);
+    showToast(`Test ${type} reminder dispatched to your phone.`, 'success');
   };
 
   // Periodic intelligent reminder evaluation
@@ -412,6 +424,7 @@ export default function App() {
         );
 
         setNotifications((prev) => [delivered, ...prev]);
+        setActivePhoneBanner(delivered);
 
         // Sync with backend
         try {
@@ -2241,8 +2254,14 @@ export default function App() {
       >
         {/* Tab 1: DASHBOARD / HOMEPAGE VIEW (Redesigned per graphic) */}
         {activeTab === 'dashboard' && (
-          <HomePageView
-            state={state}
+          <>
+            <PhoneNotificationOptInBanner
+              userId={user?.uid}
+              onSendTestNotification={handleTriggerTestNotification}
+              onShowToast={showToast}
+            />
+            <HomePageView
+              state={state}
             onSendMessage={handleNaturalInput}
             pendingFollowUp={state.pendingFollowUp}
             onCancelFollowUp={() => setState((prev) => ({ ...prev, pendingFollowUp: null }))}
@@ -2258,6 +2277,7 @@ export default function App() {
             onOpenAddStock={handleOpenAddStock}
             onOpenAddCustomer={handleOpenAddCustomer}
           />
+          </>
         )}
 
         {/* Tab 2: CALENDAR VIEW */}
@@ -2514,10 +2534,18 @@ export default function App() {
       <NotificationSettingsModal
         isOpen={isNotificationSettingsOpen}
         onClose={() => setIsNotificationSettingsOpen(false)}
+        userId={user?.uid}
         preferences={notificationPreferences}
         onSavePreferences={handleSaveNotificationPreferences}
         onSendTestNotification={handleTriggerTestNotification}
         onShowToast={showToast}
+      />
+
+      {/* 7. WhatsApp-style Phone Heads-Up Notification Banner */}
+      <PhoneNotificationBanner
+        notification={activePhoneBanner}
+        onClose={() => setActivePhoneBanner(null)}
+        onOpenAction={handleNotificationAction}
       />
     </div>
   );

@@ -257,6 +257,38 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
             </button>
           </div>
 
+          {/* Quick Test on Phone Bar */}
+          {onTriggerTest && (
+            <div className="px-5 py-2 bg-emerald-500/5 dark:bg-emerald-500/10 border-b border-emerald-500/10 flex items-center justify-between text-xs">
+              <span className="text-[11px] font-bold text-emerald-800 dark:text-emerald-300">
+                📲 Test Phone Alert:
+              </span>
+              <div className="flex items-center space-x-1.5">
+                <button
+                  type="button"
+                  onClick={() => onTriggerTest('morning')}
+                  className="px-2 py-0.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold cursor-pointer transition-colors shadow-xs"
+                >
+                  Morning 👋
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onTriggerTest('day')}
+                  className="px-2 py-0.5 rounded bg-sky-600 hover:bg-sky-500 text-white text-[10px] font-bold cursor-pointer transition-colors shadow-xs"
+                >
+                  Day ☀️
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onTriggerTest('night')}
+                  className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-bold cursor-pointer transition-colors shadow-xs"
+                >
+                  Night 🌙
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Notification List */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
             {filteredNotifications.length === 0 ? (

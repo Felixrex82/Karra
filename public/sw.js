@@ -1,7 +1,7 @@
 // Karra Service Worker - Push & Notification Manager
 // "You don't learn Karra. Karra learns your business."
 
-const CACHE_NAME = 'karra-pwa-v1';
+const CACHE_NAME = 'karra-pwa-v2';
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -11,7 +11,7 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// Push Event: Handle background push messages
+// Push Event: Handle background web push messages from server
 self.addEventListener('push', (event) => {
   let data = {
     title: 'Karra Assistant',
@@ -49,14 +49,46 @@ self.addEventListener('push', (event) => {
         title: 'Later',
       },
     ],
-    vibrate: [100, 50, 100],
+    // WhatsApp-style rhythmic double-buzz
+    vibrate: [150, 80, 150, 80, 250],
     renotify: true,
+    silent: false,
   };
 
   event.waitUntil(self.registration.showNotification(data.title, options));
 });
 
-// Notification Click Event: Focus Karra or trigger action
+// Message Event: Display native phone notification requested from app
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SHOW_PHONE_NOTIFICATION') {
+    const { title, message, category, actionType, actionLabel } = event.data;
+    const options = {
+      body: message,
+      icon: '/karra-logo.svg',
+      badge: '/karra-logo.svg',
+      tag: `karra-${category || 'reminder'}-${Date.now()}`,
+      data: {
+        actionType: actionType || 'CHAT_KARRA',
+        category,
+        url: '/',
+      },
+      actions: [
+        {
+          action: 'open_action',
+          title: actionLabel || 'Open Karra',
+        },
+      ],
+      // WhatsApp-style rhythmic buzz
+      vibrate: [150, 80, 150, 80, 250],
+      renotify: true,
+      silent: false,
+    };
+
+    event.waitUntil(self.registration.showNotification(title, options));
+  }
+});
+
+// Notification Click Event: Focus Karra or open relevant business action
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 

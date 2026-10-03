@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Karra Business Operating System",
+  "short_name": "Karra",
+  "description": "You don't learn Karra. Karra learns your business. AI-native assistant for smart African merchants.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#059669",
+  "background_color": "#0B0F17",
+  "icons": [
+    {
+      "src": "/karra-logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/karra-logo.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
