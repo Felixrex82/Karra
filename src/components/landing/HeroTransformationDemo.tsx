@@ -10,6 +10,8 @@ import {
   ShieldCheck,
   Send,
   Receipt,
+  Play,
+  Pause,
 } from 'lucide-react';
 import { KarraLogo } from '../KarraLogo';
 import { usePrefersReducedMotion } from './usePrefersReducedMotion';
@@ -94,17 +96,36 @@ export const HeroTransformationDemo: React.FC = () => {
 
   const [typedChars, setTypedChars] = useState(0);
   const [stage, setStage] = useState<'typing' | 'interpreting' | 'structured'>('typing');
+  const [isPaused, setIsPaused] = useState(false);
   const [runId, setRunId] = useState(0);
 
   const typingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const stageTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const loopTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Switch or replay scenario smoothly
   const triggerScenario = (idx: number) => {
     if (typingTimerRef.current) clearInterval(typingTimerRef.current);
     if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
+    if (loopTimerRef.current) clearTimeout(loopTimerRef.current);
     setActiveScenarioIdx(idx);
+    setIsPaused(false);
     setRunId((prev) => prev + 1);
+  };
+
+  const togglePause = () => {
+    setIsPaused((prev) => {
+      const nextPaused = !prev;
+      if (nextPaused) {
+        if (loopTimerRef.current) clearTimeout(loopTimerRef.current);
+      } else {
+        // If resuming while already at structured stage, restart cycle smoothly
+        if (stage === 'structured') {
+          triggerScenario((activeScenarioIdx + 1) % HERO_SCENARIOS.length);
+        }
+      }
+      return nextPaused;
+    });
   };
 
   useEffect(() => {
@@ -114,6 +135,8 @@ export const HeroTransformationDemo: React.FC = () => {
       setStage('structured');
       return;
     }
+
+    if (isPaused) return;
 
     // Reset to typing start
     setTypedChars(0);
@@ -135,6 +158,12 @@ export const HeroTransformationDemo: React.FC = () => {
           // Short understanding pulse, then reveal structured data
           stageTimerRef.current = setTimeout(() => {
             setStage('structured');
+
+            // Loop smoothly: hold on structured state for 5 seconds then cycle to next scenario
+            loopTimerRef.current = setTimeout(() => {
+              setActiveScenarioIdx((prev) => (prev + 1) % HERO_SCENARIOS.length);
+              setRunId((prev) => prev + 1);
+            }, 5200);
           }, 600);
         }, 350);
       }
@@ -145,8 +174,9 @@ export const HeroTransformationDemo: React.FC = () => {
     return () => {
       clearInterval(interval);
       if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
+      if (loopTimerRef.current) clearTimeout(loopTimerRef.current);
     };
-  }, [runId, activeScenarioIdx, scenario.inputText, prefersReduced]);
+  }, [runId, activeScenarioIdx, scenario.inputText, isPaused, prefersReduced]);
 
   const displayedText = prefersReduced
     ? scenario.inputText
@@ -418,6 +448,16 @@ export const HeroTransformationDemo: React.FC = () => {
             </div>
 
             <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={togglePause}
+                className="inline-flex items-center space-x-1 text-xs font-semibold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 py-1 px-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                title={isPaused ? 'Resume looping' : 'Pause animation'}
+              >
+                {isPaused ? <Play className="w-3 h-3 text-emerald-600" /> : <Pause className="w-3 h-3" />}
+                <span className="text-[11px]">{isPaused ? 'Resume' : 'Pause'}</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => triggerScenario(activeScenarioIdx)}
