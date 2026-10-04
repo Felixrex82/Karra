@@ -12,7 +12,6 @@ import {
 import { KarraLogo } from './KarraLogo';
 import { HeroTransformationDemo } from './landing/HeroTransformationDemo';
 import { HowKarraWorksAnimated } from './landing/HowKarraWorksAnimated';
-import { MemoryAnimationSection } from './landing/MemoryAnimationSection';
 import { DashboardPreviewMockup } from './landing/DashboardPreviewMockup';
 import { FinancialMathExplainer } from './landing/FinancialMathExplainer';
 import { useInView } from './landing/useInView';
@@ -60,12 +59,6 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               className="px-3 py-2 rounded-lg hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 transition-colors"
             >
               How It Works
-            </a>
-            <a
-              href="#memory"
-              className="px-3 py-2 rounded-lg hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 transition-colors"
-            >
-              Business Memory
             </a>
             <a
               href="#preview"
@@ -217,14 +210,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       </section>
 
       {/* =========================================================================
-          3. MEMORY SECTION (Demonstrating Reusable Business Knowledge)
-         ========================================================================= */}
-      <div id="memory">
-        <MemoryAnimationSection />
-      </div>
-
-      {/* =========================================================================
-          4. PRODUCT DASHBOARD PREVIEW (Subtle Viewport-Triggered Entrance)
+          3. PRODUCT DASHBOARD PREVIEW (Subtle Viewport-Triggered Entrance)
          ========================================================================= */}
       <div id="preview">
         <DashboardPreviewMockup />
