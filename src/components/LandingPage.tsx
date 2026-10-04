@@ -24,6 +24,14 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { KarraLogo } from './KarraLogo';
+import { HeroTransformationDemo } from './landing/HeroTransformationDemo';
+import { HowKarraWorksAnimated } from './landing/HowKarraWorksAnimated';
+import { MemoryAnimationSection } from './landing/MemoryAnimationSection';
+import { DashboardPreviewMockup } from './landing/DashboardPreviewMockup';
+import { FinancialMathExplainer } from './landing/FinancialMathExplainer';
+import { AnimatedCounter } from './landing/AnimatedCounter';
+import { useInView } from './landing/useInView';
+import { usePrefersReducedMotion } from './landing/usePrefersReducedMotion';
 
 interface LandingPageProps {
   onEnterCode: () => void;
@@ -232,6 +240,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
   const [chartMetric, setChartMetric] = useState<'profit' | 'cashflow'>('profit');
   const [hoveredDayIndex, setHoveredDayIndex] = useState<number | null>(null);
 
+  const prefersReduced = usePrefersReducedMotion();
+  const { ref: businessesRef, isInView: isBusinessesInView } = useInView({ threshold: 0.15 });
+  const { ref: simulatorRef, isInView: isSimulatorInView } = useInView({ threshold: 0.15 });
+  const { ref: chartRef, isInView: isChartInView } = useInView({ threshold: 0.15 });
+  const { ref: featuresRef, isInView: isFeaturesInView } = useInView({ threshold: 0.15 });
+  const { ref: storiesRef, isInView: isStoriesInView } = useInView({ threshold: 0.15 });
+
   const activeScenario =
     DEMO_SCENARIOS.find((s) => s.id === activeScenarioId) || DEMO_SCENARIOS[0];
 
@@ -286,22 +301,22 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               Live Demo
             </a>
             <a
+              href="#how-it-works"
+              className="px-3 py-2 rounded-lg hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 transition-colors"
+            >
+              How It Works
+            </a>
+            <a
+              href="#memory"
+              className="px-3 py-2 rounded-lg hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 transition-colors"
+            >
+              Memory
+            </a>
+            <a
               href="#chart"
               className="px-3 py-2 rounded-lg hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 transition-colors"
             >
               Live Chart
-            </a>
-            <a
-              href="#philosophy"
-              className="px-3 py-2 rounded-lg hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 transition-colors"
-            >
-              Our Philosophy
-            </a>
-            <a
-              href="#businesses"
-              className="px-3 py-2 rounded-lg hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-slate-100/80 dark:hover:bg-slate-800/60 transition-colors"
-            >
-              Who It's For
             </a>
             <a
               href="#features"
@@ -414,6 +429,11 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           {/* =========================================================================
+              HERO ANIMATION: Realistic Natural Language Transformation Demo
+             ========================================================================= */}
+          <HeroTransformationDemo />
+
+          {/* =========================================================================
               THE REQUIRED PHILOSOPHY BANNER
              ========================================================================= */}
           <div id="philosophy" className="mt-12 sm:mt-16 max-w-3xl mx-auto">
@@ -450,8 +470,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </p>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center">
+          <div ref={businessesRef} className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div
+              style={{ transitionDelay: prefersReduced ? '0ms' : '0ms' }}
+              className={`p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center transition-all duration-500 ${
+                isBusinessesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
+              }`}
+            >
               <div className="w-9 h-9 mx-auto rounded-lg bg-emerald-100 dark:bg-emerald-950 flex items-center justify-center text-emerald-700 dark:text-emerald-300 mb-2.5">
                 <Scissors className="w-4 h-4" />
               </div>
@@ -463,7 +488,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </p>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center">
+            <div
+              style={{ transitionDelay: prefersReduced ? '0ms' : '80ms' }}
+              className={`p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center transition-all duration-500 ${
+                isBusinessesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
+              }`}
+            >
               <div className="w-9 h-9 mx-auto rounded-lg bg-amber-100 dark:bg-amber-950 flex items-center justify-center text-amber-700 dark:text-amber-300 mb-2.5">
                 <Utensils className="w-4 h-4" />
               </div>
@@ -475,7 +505,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </p>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center">
+            <div
+              style={{ transitionDelay: prefersReduced ? '0ms' : '160ms' }}
+              className={`p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center transition-all duration-500 ${
+                isBusinessesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
+              }`}
+            >
               <div className="w-9 h-9 mx-auto rounded-lg bg-blue-100 dark:bg-blue-950 flex items-center justify-center text-blue-700 dark:text-blue-300 mb-2.5">
                 <ShoppingBag className="w-4 h-4" />
               </div>
@@ -487,7 +522,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </p>
             </div>
 
-            <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center">
+            <div
+              style={{ transitionDelay: prefersReduced ? '0ms' : '240ms' }}
+              className={`p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-center transition-all duration-500 ${
+                isBusinessesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-3'
+              }`}
+            >
               <div className="w-9 h-9 mx-auto rounded-lg bg-purple-100 dark:bg-purple-950 flex items-center justify-center text-purple-700 dark:text-purple-300 mb-2.5">
                 <Wrench className="w-4 h-4" />
               </div>
@@ -537,7 +577,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           {/* Interactive Card Workbench */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 bg-white dark:bg-[#101726] rounded-2xl p-5 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-md">
+          <div
+            ref={simulatorRef}
+            className={`grid grid-cols-1 lg:grid-cols-12 gap-6 bg-white dark:bg-[#101726] rounded-2xl p-5 sm:p-8 border border-slate-200 dark:border-slate-800 shadow-md transition-all duration-700 ${
+              isSimulatorInView || prefersReduced ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 translate-y-4 scale-[0.99]'
+            }`}
+          >
             {/* Left: Input Simulated Business Note */}
             <div className="lg:col-span-5 flex flex-col justify-between space-y-5">
               <div>
@@ -750,13 +795,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           {/* The Visual Chart Workbench Container */}
-          <div className="bg-slate-50 dark:bg-[#101726] rounded-2xl p-5 sm:p-7 border border-slate-200 dark:border-slate-800 shadow-sm">
+          <div ref={chartRef} className="bg-slate-50 dark:bg-[#101726] rounded-2xl p-5 sm:p-7 border border-slate-200 dark:border-slate-800 shadow-sm transition-all duration-700">
             {/* Top 4 KPI Metrics computed live */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-7">
               <div className="p-3.5 rounded-xl bg-white dark:bg-[#162238] border border-slate-200 dark:border-slate-700/80">
                 <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">7-Day Total Revenue</p>
                 <p className="text-base sm:text-xl font-extrabold text-slate-900 dark:text-white mt-0.5">
-                  ₦{weeklyTotals.revenue.toLocaleString()}
+                  <AnimatedCounter value={weeklyTotals.revenue} prefix="₦" trigger={isChartInView} />
                 </p>
                 <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5">
                   Across 7 trading days
@@ -766,7 +811,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div className="p-3.5 rounded-xl bg-white dark:bg-[#162238] border border-slate-200 dark:border-slate-700/80">
                 <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Supplies & Job Costs</p>
                 <p className="text-base sm:text-xl font-extrabold text-slate-700 dark:text-slate-300 mt-0.5">
-                  ₦{weeklyTotals.cost.toLocaleString()}
+                  <AnimatedCounter value={weeklyTotals.cost} prefix="₦" trigger={isChartInView} />
                 </p>
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium mt-0.5">
                   Direct materials & supplies
@@ -776,7 +821,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80">
                 <p className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-400 tracking-wider">Real Net Profit</p>
                 <p className="text-base sm:text-xl font-extrabold text-emerald-800 dark:text-emerald-300 mt-0.5">
-                  ₦{weeklyTotals.profit.toLocaleString()}
+                  <AnimatedCounter value={weeklyTotals.profit} prefix="₦" trigger={isChartInView} />
                 </p>
                 <p className="text-[10px] text-emerald-700 dark:text-emerald-400 font-bold mt-0.5">
                   {profitMarginPercent}% Take-Home Margin
@@ -786,7 +831,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               <div className="p-3.5 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/80">
                 <p className="text-[10px] uppercase font-bold text-amber-700 dark:text-amber-400 tracking-wider">Uncollected Credit</p>
                 <p className="text-base sm:text-xl font-extrabold text-amber-800 dark:text-amber-300 mt-0.5">
-                  ₦{weeklyTotals.debt.toLocaleString()}
+                  <AnimatedCounter value={weeklyTotals.debt} prefix="₦" trigger={isChartInView} />
                 </p>
                 <p className="text-[10px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
                   Tracked in Debtor Ledger
@@ -828,7 +873,8 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 {activeScenario.weeklyChart.map((item, idx) => {
                   const isHovered = hoveredDayIndex === idx;
                   const totalForDay = chartMetric === 'profit' ? item.revenue : (item.cashCollected + item.debtAdded);
-                  const heightPercent = maxRevenue > 0 ? Math.min(100, Math.max(14, Math.round((totalForDay / maxRevenue) * 100))) : 20;
+                  const targetHeight = maxRevenue > 0 ? Math.min(100, Math.max(14, Math.round((totalForDay / maxRevenue) * 100))) : 20;
+                  const displayHeight = isChartInView || prefersReduced ? targetHeight : 12;
 
                   const primaryHeightPct = totalForDay > 0
                     ? Math.round(((chartMetric === 'profit' ? item.profit : item.cashCollected) / totalForDay) * 100)
@@ -842,10 +888,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                       onClick={() => setHoveredDayIndex(idx)}
                       className="flex-1 flex flex-col items-center h-full justify-end group cursor-pointer"
                     >
-                      {/* Bar Pillar */}
+                      {/* Bar Pillar with gentle ease-out height growth on viewport entry */}
                       <div
-                        style={{ height: `${heightPercent}%` }}
-                        className={`w-full max-w-[54px] rounded-t-lg transition-all duration-300 flex flex-col justify-end overflow-hidden ${
+                        style={{
+                          height: `${displayHeight}%`,
+                          transition: prefersReduced ? 'none' : 'height 0.7s cubic-bezier(0.16, 1, 0.3, 1)',
+                        }}
+                        className={`w-full max-w-[54px] rounded-t-lg flex flex-col justify-end overflow-hidden ${
                           isHovered
                             ? 'ring-2 ring-emerald-500 dark:ring-emerald-400 shadow-md scale-102'
                             : 'hover:opacity-90'
@@ -956,8 +1005,20 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               </div>
             </div>
           </div>
+
+          {/* =========================================================================
+              FINANCIAL/ANALYTICS SECTION: Subtle Data-Building Math Animation
+             ========================================================================= */}
+          <FinancialMathExplainer />
         </div>
       </section>
+
+      {/* =========================================================================
+          PRODUCT SCREENSHOTS / DASHBOARD PREVIEW: Viewport-Triggered Entrance
+         ========================================================================= */}
+      <div id="preview">
+        <DashboardPreviewMockup />
+      </div>
 
       {/* =========================================================================
           KEY CAPABILITIES (Features built specifically for Nigerian small businesses)
@@ -975,9 +1036,14 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div ref={featuresRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Card 1: Natural Language */}
-          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            style={{ transitionDelay: prefersReduced ? '0ms' : '0ms' }}
+            className={`p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-500 ${
+              isFeaturesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+            }`}
+          >
             <div className="w-10 h-10 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center text-emerald-600 dark:text-emerald-400 mb-4">
               <MessageSquare className="w-5 h-5" />
             </div>
@@ -990,7 +1056,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           {/* Card 2: Autonomous Customer & Debtor Ledger */}
-          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            style={{ transitionDelay: prefersReduced ? '0ms' : '80ms' }}
+            className={`p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-500 ${
+              isFeaturesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+            }`}
+          >
             <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 flex items-center justify-center text-amber-600 dark:text-amber-400 mb-4">
               <Users className="w-5 h-5" />
             </div>
@@ -1003,7 +1074,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           {/* Card 3: True Margins & Job Economics */}
-          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            style={{ transitionDelay: prefersReduced ? '0ms' : '160ms' }}
+            className={`p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-500 ${
+              isFeaturesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+            }`}
+          >
             <div className="w-10 h-10 rounded-xl bg-teal-50 dark:bg-teal-950/60 border border-teal-200 dark:border-teal-800 flex items-center justify-center text-teal-600 dark:text-teal-400 mb-4">
               <TrendingUp className="w-5 h-5" />
             </div>
@@ -1016,7 +1092,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           {/* Card 4: Daily Closing Summaries */}
-          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            style={{ transitionDelay: prefersReduced ? '0ms' : '240ms' }}
+            className={`p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-500 ${
+              isFeaturesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+            }`}
+          >
             <div className="w-10 h-10 rounded-xl bg-sky-50 dark:bg-sky-950/60 border border-sky-200 dark:border-sky-800 flex items-center justify-center text-sky-600 dark:text-sky-400 mb-4">
               <FileSpreadsheet className="w-5 h-5" />
             </div>
@@ -1029,7 +1110,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           {/* Card 5: Split Cash & Transfers */}
-          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            style={{ transitionDelay: prefersReduced ? '0ms' : '320ms' }}
+            className={`p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-500 ${
+              isFeaturesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+            }`}
+          >
             <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 flex items-center justify-center text-indigo-600 dark:text-indigo-400 mb-4">
               <Receipt className="w-5 h-5" />
             </div>
@@ -1042,7 +1128,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </div>
 
           {/* Card 6: Offline-First */}
-          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-shadow">
+          <div
+            style={{ transitionDelay: prefersReduced ? '0ms' : '400ms' }}
+            className={`p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm hover:shadow-md transition-all duration-500 ${
+              isFeaturesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+            }`}
+          >
             <div className="w-10 h-10 rounded-xl bg-violet-50 dark:bg-violet-950/60 border border-violet-200 dark:border-violet-800 flex items-center justify-center text-violet-600 dark:text-violet-400 mb-4">
               <Database className="w-5 h-5" />
             </div>
@@ -1057,61 +1148,30 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       </section>
 
       {/* =========================================================================
-          HOW IT WORKS (Simple, clear 3-step workflow)
+          HOW IT WORKS (Animated 4-Stage Workflow)
          ========================================================================= */}
       <section id="how-it-works" className="py-16 sm:py-24 bg-white dark:bg-[#0B111E] border-t border-slate-200/80 dark:border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="text-center max-w-3xl mx-auto mb-12 sm:mb-16">
             <span className="text-xs font-bold uppercase tracking-widest text-emerald-600 dark:text-emerald-400">
-              Simple 3-Step Workflow
+              Sequential 4-Stage Workflow
             </span>
             <h2 className="text-2xl sm:text-4xl font-extrabold text-slate-900 dark:text-white mt-1">
               How Karra fits seamlessly into your daily business.
             </h2>
+            <p className="mt-3 text-sm sm:text-base text-slate-600 dark:text-slate-400">
+              Watch how Karra translates everyday speech into structured records and instant business clarity.
+            </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {/* Step 1 */}
-            <div className="flex flex-col items-center text-center p-6 rounded-2xl bg-slate-50 dark:bg-[#101726] border border-slate-200 dark:border-slate-800">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white font-extrabold text-base flex items-center justify-center shadow-md shadow-emerald-700/30 mb-5">
-                1
-              </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Log Transactions Naturally
-              </h3>
-              <p className="mt-2 text-xs sm:text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                Type or speak income, job deposits, supply runs, and business expenses as they happen throughout your day.
-              </p>
-            </div>
-
-            {/* Step 2 */}
-            <div className="flex flex-col items-center text-center p-6 rounded-2xl bg-slate-50 dark:bg-[#101726] border border-slate-200 dark:border-slate-800">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white font-extrabold text-base flex items-center justify-center shadow-md shadow-emerald-700/30 mb-5">
-                2
-              </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Autonomous Ledger Balancing
-              </h3>
-              <p className="mt-2 text-xs sm:text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                Karra parses figures, routes cash vs bank transfers, logs material costs, and updates debtor records in real time.
-              </p>
-            </div>
-
-            {/* Step 3 */}
-            <div className="flex flex-col items-center text-center p-6 rounded-2xl bg-slate-50 dark:bg-[#101726] border border-slate-200 dark:border-slate-800">
-              <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white font-extrabold text-base flex items-center justify-center shadow-md shadow-emerald-700/30 mb-5">
-                3
-              </div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
-                Total Daily Clarity
-              </h3>
-              <p className="mt-2 text-xs sm:text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
-                Review your daily summary card at close of business. Know your cash in hand, bank transfers, and true net margin.
-              </p>
-            </div>
-          </div>
+          <HowKarraWorksAnimated />
         </div>
       </section>
+
+      {/* =========================================================================
+          MEMORY ANIMATION (Demonstrating Reusable Business Knowledge)
+         ========================================================================= */}
+      <MemoryAnimationSection />
 
       {/* =========================================================================
           NIGERIAN BUSINESS STORIES (Authentic social proof from real sectors)
@@ -1126,8 +1186,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           </h2>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+        <div ref={storiesRef} className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div
+            style={{ transitionDelay: prefersReduced ? '0ms' : '0ms' }}
+            className={`p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between transition-all duration-500 ${
+              isStoriesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+            }`}
+          >
             <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 italic leading-relaxed">
               &ldquo;Managing client fabric costs, advance deposits, and balances due on final fittings used to be scattered in random notebooks. Now Karra tracks every client's balance and sends polite WhatsApp reminders.&rdquo;
             </p>
@@ -1141,7 +1206,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
           </div>
 
-          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+          <div
+            style={{ transitionDelay: prefersReduced ? '0ms' : '100ms' }}
+            className={`p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between transition-all duration-500 ${
+              isStoriesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+            }`}
+          >
             <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 italic leading-relaxed">
               &ldquo;When catering events, tracking ingredient purchases against installment bank transfers was a nightmare. Karra shows me my exact profit before I even deliver the food.&rdquo;
             </p>
@@ -1155,7 +1225,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             </div>
           </div>
 
-          <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+          <div
+            style={{ transitionDelay: prefersReduced ? '0ms' : '200ms' }}
+            className={`p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-sm flex flex-col justify-between transition-all duration-500 ${
+              isStoriesInView || prefersReduced ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'
+            }`}
+          >
             <p className="text-xs sm:text-sm text-slate-700 dark:text-slate-300 italic leading-relaxed">
               &ldquo;Before Karra, tracking which customer paid part cash and owed the rest was giving me sleepless nights. Now I speak the sale into my phone and our customer credit list is always 100% accurate.&rdquo;
             </p>
@@ -1172,9 +1247,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
       </section>
 
       {/* =========================================================================
-          BOTTOM INVITATION CTA
+          BOTTOM INVITATION CTA (Subtle Professional Ambient Gradient Drift)
          ========================================================================= */}
-      <section className="py-16 sm:py-20 bg-emerald-800 dark:bg-emerald-900 text-white">
+      <section className="py-16 sm:py-20 bg-gradient-to-r from-emerald-800 via-emerald-900 to-emerald-800 dark:from-emerald-900 dark:via-emerald-950 dark:to-emerald-900 animate-subtle-gradient text-white relative overflow-hidden">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <div className="w-12 h-12 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center mx-auto mb-4">
             <Key className="w-6 h-6 text-emerald-200" />
