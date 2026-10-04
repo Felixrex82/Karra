@@ -19,7 +19,7 @@ import {
   Moon,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { formatAuthErrorMessage, validateFirestoreInvitation } from '../lib/firebase';
+import { formatAuthErrorMessage, validateFirestoreInvitation, normalizeBetaCode } from '../lib/firebase';
 import { KarraLogo } from './KarraLogo';
 import { LandingPage } from './LandingPage';
 
@@ -75,7 +75,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({
    */
   const handleVerifyCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanCode = invitationCode.trim().toUpperCase();
+    const cleanCode = normalizeBetaCode(invitationCode);
     if (!cleanCode) {
       setCodeError("Please enter your invitation code.");
       return;

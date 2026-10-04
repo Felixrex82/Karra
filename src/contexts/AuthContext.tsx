@@ -17,6 +17,7 @@ import {
   CloudLedgerResult,
   validateFirestoreInvitation,
   redeemFirestoreInvitation,
+  normalizeBetaCode,
 } from '../lib/firebase';
 import { UserProfile, BusinessState } from '../types';
 import { trackAppEvent } from '../utils/analyticsTracker';
@@ -330,7 +331,7 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const redeemBetaCode = useCallback(async (code: string): Promise<{ success: boolean; message: string }> => {
     if (!user) return { success: false, message: 'You must be signed in to redeem an invitation code.' };
 
-    const cleanCode = code.trim().toUpperCase();
+    const cleanCode = normalizeBetaCode(code);
     try {
       const res = await fetch('/api/beta/redeem-code', {
         method: 'POST',

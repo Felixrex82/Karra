@@ -682,6 +682,30 @@ export async function revokeAdminFirestoreInvitation(rawCode: string): Promise<b
   }
 }
 
+export const MASTER_BETA_CODES: Record<string, string> = {
+  'FOUNDER-ROOT': 'Platform Founder Beta Key',
+  'KARRA-FOUNDER': 'Founder Master Access Key',
+  'KARRA-BETA-2026': 'Karra VIP Tester Invitation',
+  'KARRA-EARLY-ACCESS': 'Early Merchant Beta Access',
+};
+
+/**
+ * Flexible code normalizer: handles case, spacing, dashes, and missing KARRA- prefix
+ */
+export function normalizeBetaCode(input: string): string {
+  if (!input) return '';
+  let clean = input.trim().toUpperCase().replace(/["']/g, '');
+  clean = clean.replace(/[\s_]+/g, '-');
+  // Auto-prefix KARRA- if 8-char chunk without KARRA- is provided (e.g. P44E-2238 or P44E2238)
+  if (!clean.startsWith('KARRA-') && !clean.includes('FOUNDER')) {
+    const raw = clean.replace(/-/g, '');
+    if (raw.length === 8) {
+      clean = `KARRA-${raw.slice(0, 4)}-${raw.slice(4, 8)}`;
+    }
+  }
+  return clean;
+}
+
 /**
  * Public: Validate invitation code against Firestore
  */
@@ -692,16 +716,62 @@ export async function validateFirestoreInvitation(rawCode: string): Promise<{
   invitation?: BetaInvitation;
 }> {
   try {
-    const cleanCode = rawCode.trim().toUpperCase();
+    const cleanCode = normalizeBetaCode(rawCode);
     if (!cleanCode) {
       return { valid: false, reason: 'INVALID', message: 'Please enter your invitation code.' };
     }
+
+    // 1. Check master bypass codes
+    if (MASTER_BETA_CODES[cleanCode]) {
+      return {
+        valid: true,
+        message: 'Invitation code verified!',
+        invitation: {
+          id: 'inv_master_' + cleanCode.toLowerCase(),
+          code: cleanCode,
+          status: 'active',
+          maxUses: 9999,
+          currentUses: 0,
+          createdAt: new Date().toISOString(),
+          expiresAt: null,
+          createdBy: 'olamidefelix54@gmail.com',
+          notes: MASTER_BETA_CODES[cleanCode],
+          usedBy: [],
+          redeemedAt: null,
+        },
+      };
+    }
+
+    // 2. Direct document ID lookup
+    let inv: BetaInvitation | null = null;
     const docRef = doc(db, 'beta_invitations', cleanCode);
     const snap = await getDoc(docRef);
-    if (!snap.exists()) {
+    if (snap.exists()) {
+      inv = snap.data() as BetaInvitation;
+    } else {
+      // 3. Collection scan for flexible match (case-insensitive / stripped dashes)
+      const colRef = collection(db, 'beta_invitations');
+      const allDocs = await getDocs(colRef);
+      const cleanStripped = cleanCode.replace(/[^A-Z0-9]/g, '');
+      for (const d of allDocs.docs) {
+        const data = d.data() as BetaInvitation;
+        const candidateCode = (data.code || d.id || '').toUpperCase();
+        const candidateStripped = candidateCode.replace(/[^A-Z0-9]/g, '');
+        if (
+          candidateCode === cleanCode ||
+          candidateStripped === cleanStripped ||
+          (cleanStripped.length >= 6 && (candidateStripped.includes(cleanStripped) || cleanStripped.includes(candidateStripped)))
+        ) {
+          inv = data;
+          break;
+        }
+      }
+    }
+
+    if (!inv) {
       return { valid: false, reason: 'INVALID', message: "That invitation code wasn't found." };
     }
-    const inv = snap.data() as BetaInvitation;
+
     if (inv.status === 'revoked') {
       return { valid: false, reason: 'REVOKED', message: 'This invitation code has been revoked.' };
     }
@@ -725,10 +795,29 @@ export async function redeemFirestoreInvitation(
   user: { uid?: string; email?: string }
 ): Promise<boolean> {
   try {
-    const cleanCode = rawCode.trim().toUpperCase();
+    const cleanCode = normalizeBetaCode(rawCode);
     if (!cleanCode) return false;
-    const docRef = doc(db, 'beta_invitations', cleanCode);
-    const snap = await getDoc(docRef);
+    if (MASTER_BETA_CODES[cleanCode]) return true;
+
+    // Check direct doc
+    let targetDocRef = doc(db, 'beta_invitations', cleanCode);
+    let snap = await getDoc(targetDocRef);
+    if (!snap.exists()) {
+      // Find matching doc in collection
+      const allDocs = await getDocs(collection(db, 'beta_invitations'));
+      const cleanStripped = cleanCode.replace(/[^A-Z0-9]/g, '');
+      for (const d of allDocs.docs) {
+        const data = d.data() as BetaInvitation;
+        const candidateCode = (data.code || d.id || '').toUpperCase();
+        const candidateStripped = candidateCode.replace(/[^A-Z0-9]/g, '');
+        if (candidateCode === cleanCode || candidateStripped === cleanStripped) {
+          targetDocRef = doc(db, 'beta_invitations', d.id);
+          snap = d as any;
+          break;
+        }
+      }
+    }
+
     if (!snap.exists()) return false;
     const inv = snap.data() as BetaInvitation;
     const currentUses = (inv.currentUses || 0) + 1;
@@ -737,7 +826,7 @@ export async function redeemFirestoreInvitation(
     const usedBy = Array.isArray(inv.usedBy)
       ? [...inv.usedBy, user.email || user.uid || 'user']
       : [user.email || user.uid || 'user'];
-    await updateDoc(docRef, {
+    await updateDoc(targetDocRef, {
       currentUses,
       status,
       usedBy,

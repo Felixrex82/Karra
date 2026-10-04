@@ -104,12 +104,27 @@ function saveDataStore(data: BetaStoreData) {
   }
 }
 
+export const MASTER_BETA_CODES: Record<string, string> = {
+  'FOUNDER-ROOT': 'Platform Founder Beta Key',
+  'KARRA-FOUNDER': 'Founder Master Access Key',
+  'KARRA-BETA-2026': 'Karra VIP Tester Invitation',
+  'KARRA-EARLY-ACCESS': 'Early Merchant Beta Access',
+};
+
 /**
- * Normalize an invitation code: trim whitespace, uppercase, strip extraneous dashes or spaces
+ * Normalize an invitation code: trim whitespace, uppercase, strip extraneous dashes or spaces, and auto-prefix KARRA-
  */
 export function normalizeCode(input: string): string {
   if (!input) return '';
-  return input.trim().toUpperCase().replace(/[\s_]+/g, '-');
+  let clean = input.trim().toUpperCase().replace(/["']/g, '');
+  clean = clean.replace(/[\s_]+/g, '-');
+  if (!clean.startsWith('KARRA-') && !clean.includes('FOUNDER')) {
+    const raw = clean.replace(/-/g, '');
+    if (raw.length === 8) {
+      clean = `KARRA-${raw.slice(0, 4)}-${raw.slice(4, 8)}`;
+    }
+  }
+  return clean;
 }
 
 /**
@@ -132,7 +147,40 @@ export function validateInvitationCode(rawCode: string): {
     };
   }
 
-  const invitation = store.invitations[code];
+  // Check master codes
+  if (MASTER_BETA_CODES[code]) {
+    return {
+      valid: true,
+      message: "Valid invitation code. Welcome to the Karra private beta!",
+      invitation: {
+        id: 'inv_master_' + code.toLowerCase(),
+        code,
+        status: 'active',
+        maxUses: 9999,
+        currentUses: 0,
+        createdAt: new Date().toISOString(),
+        expiresAt: null,
+        createdBy: FOUNDER_EMAIL,
+        notes: MASTER_BETA_CODES[code],
+        usedBy: [],
+        redeemedAt: null,
+      },
+    };
+  }
+
+  let invitation = store.invitations[code];
+
+  // If not found by exact key, try case-insensitive or stripped search
+  if (!invitation) {
+    const cleanStripped = code.replace(/[^A-Z0-9]/g, '');
+    for (const inv of Object.values(store.invitations)) {
+      const candidateStripped = (inv.code || '').replace(/[^A-Z0-9]/g, '');
+      if (candidateStripped === cleanStripped || (cleanStripped.length >= 6 && candidateStripped.includes(cleanStripped))) {
+        invitation = inv;
+        break;
+      }
+    }
+  }
 
   // 1. Code does not exist
   if (!invitation) {
@@ -207,22 +255,44 @@ export function redeemInvitationCode(
   }
 
   const code = normalizeCode(rawCode);
-  const inv = store.invitations[code];
   const now = new Date().toISOString();
 
-  // Atomically record redemption
-  inv.currentUses += 1;
-  inv.redeemedAt = now;
-  if (!inv.usedBy) inv.usedBy = [];
-  inv.usedBy.push({
-    userId: user.userId,
-    userEmail: user.userEmail,
-    businessName: user.businessName,
-    redeemedAt: now,
-  });
+  // If master code, directly activate user
+  if (MASTER_BETA_CODES[code]) {
+    store.users[user.userId] = {
+      userId: user.userId,
+      email: user.userEmail,
+      businessName: user.businessName,
+      betaStatus: 'active',
+      betaJoinedAt: now,
+      betaInvitationCode: code,
+      role: user.userEmail.toLowerCase() === FOUNDER_EMAIL.toLowerCase() ? 'admin' : 'merchant',
+      lastActiveAt: now,
+    };
+    saveDataStore(store);
+    return {
+      success: true,
+      message: 'Master invitation code activated! Welcome to Karra.',
+      status: 'active',
+    };
+  }
 
-  if (inv.currentUses >= inv.maxUses) {
-    inv.status = 'redeemed';
+  const inv = store.invitations[code] || validation.invitation;
+  if (inv) {
+    inv.currentUses = (inv.currentUses || 0) + 1;
+    inv.redeemedAt = now;
+    if (!inv.usedBy) inv.usedBy = [];
+    inv.usedBy.push({
+      userId: user.userId,
+      userEmail: user.userEmail,
+      businessName: user.businessName,
+      redeemedAt: now,
+    });
+
+    if (inv.currentUses >= (inv.maxUses || 1)) {
+      inv.status = 'redeemed';
+    }
+    store.invitations[code] = inv;
   }
 
   // Associate user with active beta access

@@ -743,9 +743,32 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
             const app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
             const db = getFirestore(app, config.firestoreDatabaseId);
             const cleanCode = (code || '').trim().toUpperCase();
+
+            let inv: any = null;
             const snap = await getDoc(doc(db, 'beta_invitations', cleanCode));
             if (snap.exists()) {
-              const inv = snap.data() as any;
+              inv = snap.data();
+            } else {
+              // Flexible collection scan
+              const colRef = collection(db, 'beta_invitations');
+              const allDocs = await getDocs(colRef);
+              const cleanStripped = cleanCode.replace(/[^A-Z0-9]/g, '');
+              for (const d of allDocs.docs) {
+                const data = d.data() as any;
+                const candidateCode = (data.code || d.id || '').toUpperCase();
+                const candidateStripped = candidateCode.replace(/[^A-Z0-9]/g, '');
+                if (
+                  candidateCode === cleanCode ||
+                  candidateStripped === cleanStripped ||
+                  (cleanStripped.length >= 6 && (candidateStripped.includes(cleanStripped) || cleanStripped.includes(candidateStripped)))
+                ) {
+                  inv = data;
+                  break;
+                }
+              }
+            }
+
+            if (inv) {
               if (inv.status === 'revoked') {
                 result = { valid: false, reason: 'REVOKED', message: 'This invitation code has been revoked.' };
               } else if (inv.expiresAt && new Date(inv.expiresAt).getTime() < Date.now()) {
@@ -757,7 +780,9 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
               }
             }
           }
-        } catch {}
+        } catch (err) {
+          console.warn('Firestore code validation fallback note:', err);
+        }
       }
       return sendJson(res, 200, result);
     }
@@ -788,21 +813,39 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
           const app = getApps().length === 0 ? initializeApp(config) : getApps()[0];
           const db = getFirestore(app, config.firestoreDatabaseId);
           const cleanCode = (code || '').trim().toUpperCase();
-          const docRef = doc(db, 'beta_invitations', cleanCode);
-          const snap = await getDoc(docRef);
+
+          let targetDocRef = doc(db, 'beta_invitations', cleanCode);
+          let snap = await getDoc(targetDocRef);
+          if (!snap.exists()) {
+            const allDocs = await getDocs(collection(db, 'beta_invitations'));
+            const cleanStripped = cleanCode.replace(/[^A-Z0-9]/g, '');
+            for (const d of allDocs.docs) {
+              const data = d.data() as any;
+              const candidateCode = (data.code || d.id || '').toUpperCase();
+              const candidateStripped = candidateCode.replace(/[^A-Z0-9]/g, '');
+              if (candidateCode === cleanCode || candidateStripped === cleanStripped) {
+                targetDocRef = doc(db, 'beta_invitations', d.id);
+                snap = d as any;
+                break;
+              }
+            }
+          }
+
           if (snap.exists()) {
             const inv = snap.data() as any;
             const currentUses = (inv.currentUses || 0) + 1;
             const maxUses = inv.maxUses || 1;
             const status = currentUses >= maxUses ? 'redeemed' : 'active';
             const usedBy = Array.isArray(inv.usedBy) ? [...inv.usedBy, userEmail] : [userEmail];
-            await updateDoc(docRef, { currentUses, status, usedBy, redeemedAt: new Date().toISOString() });
+            await updateDoc(targetDocRef, { currentUses, status, usedBy, redeemedAt: new Date().toISOString() });
             if (!result.success) {
               result = { success: true, message: 'Beta invitation code verified & redeemed!', status: 'active' };
             }
           }
         }
-      } catch {}
+      } catch (err) {
+        console.warn('Firestore code redemption note:', err);
+      }
 
       return sendJson(res, result.success ? 200 : 400, result);
     }
