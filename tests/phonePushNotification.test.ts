@@ -41,4 +41,32 @@ assert(DEFAULT_NOTIFICATION_PREFERENCES.windows.day.enabled);
 assert(DEFAULT_NOTIFICATION_PREFERENCES.windows.night.enabled);
 console.log('✓ Morning, Daytime, and Night windows are active by default');
 
+// Test 5: User Presence & Away-from-App Activity Tracking
+console.log('Test 5: User Presence & Activity Tracking');
+import { updateUserPresence, scheduleDelayedPush, startBackgroundNotificationWorker } from '../server/notificationEngine';
+
+updateUserPresence({
+  userId: 'merchant_test_phone_1',
+  userEmail: 'test@merchant.ng',
+  businessName: 'Lekki Couture',
+  lastActiveTimestamp: new Date().toISOString(),
+  eventsTodayCount: 2,
+});
+console.log('✓ User presence tracking safely stored');
+
+// Test 6: Delayed Push Scheduling for Away-from-App Testing
+console.log('Test 6: Delayed Push Scheduling');
+const scheduledPromise = scheduleDelayedPush('merchant_test_phone_1', 1, 'night');
+assert(scheduledPromise instanceof Promise, 'scheduleDelayedPush must return a Promise');
+const scheduledResult = await scheduledPromise;
+assert(scheduledResult.title, 'Scheduled notification must have a title');
+assert.strictEqual(scheduledResult.category, 'NIGHT_REMINDER');
+console.log('✓ Delayed push successfully delivered for away-from-app testing');
+
+// Test 7: Background Notification Worker Initialization
+console.log('Test 7: Background Worker Initialization');
+startBackgroundNotificationWorker();
+console.log('✓ Background worker started without errors');
+
 console.log('--- ALL PHONE PUSH TESTS PASSED! ---');
+process.exit(0);

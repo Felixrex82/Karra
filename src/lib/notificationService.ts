@@ -53,6 +53,71 @@ export function playCalmNotificationChime() {
 // Service Worker & Permission Helpers
 // -------------------------------------------------------------
 
+export function getOrCreateClientUserId(authUid?: string): string {
+  if (authUid && authUid.trim().length > 0) return authUid;
+  if (typeof window === 'undefined') return 'guest_merchant';
+  try {
+    let stored = localStorage.getItem('karra_client_device_uid');
+    if (!stored) {
+      stored = `merchant_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      localStorage.setItem('karra_client_device_uid', stored);
+    }
+    return stored;
+  } catch {
+    return 'guest_merchant';
+  }
+}
+
+export async function scheduleAwayReminderInServiceWorker(params: {
+  id?: string;
+  delayMs?: number;
+  reminder: {
+    title: string;
+    message: string;
+    category?: string;
+    actionType?: string;
+    actionLabel?: string;
+  };
+  force?: boolean;
+}): Promise<boolean> {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+    return false;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (reg.active) {
+      reg.active.postMessage({
+        type: 'SCHEDULE_AWAY_REMINDER',
+        id: params.id || 'karra_away_reminder',
+        delayMs: params.delayMs || 5000,
+        reminder: params.reminder,
+        force: params.force ?? false,
+      });
+      return true;
+    }
+  } catch (err) {
+    console.warn('[NotificationService] Failed to schedule away reminder in SW:', err);
+  }
+  return false;
+}
+
+export async function cancelAwayRemindersInServiceWorker(id?: string): Promise<boolean> {
+  if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
+    return false;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (reg.active) {
+      reg.active.postMessage({
+        type: 'CANCEL_AWAY_REMINDERS',
+        id,
+      });
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
 export async function registerServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
     return null;
@@ -77,10 +142,12 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-export async function subscribePhonePushNotifications(userId: string): Promise<boolean> {
+export async function subscribePhonePushNotifications(userId?: string): Promise<boolean> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator) || !('PushManager' in window)) {
     return false;
   }
+
+  const effectiveUserId = getOrCreateClientUserId(userId);
 
   try {
     const reg = await navigator.serviceWorker.ready;
@@ -108,7 +175,7 @@ export async function subscribePhonePushNotifications(userId: string): Promise<b
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          userId,
+          userId: effectiveUserId,
           subscription: sub.toJSON ? sub.toJSON() : sub,
         }),
       });
@@ -250,18 +317,6 @@ export async function deliverNotification(
   ) {
     try {
       if ('serviceWorker' in navigator) {
-        // Send message to active Service Worker controller
-        if (navigator.serviceWorker.controller) {
-          navigator.serviceWorker.controller.postMessage({
-            type: 'SHOW_PHONE_NOTIFICATION',
-            title: newItem.title,
-            message: newItem.message,
-            category: newItem.category,
-            actionType: newItem.actionType,
-            actionLabel: newItem.actionLabel,
-          });
-        }
-
         const reg = await navigator.serviceWorker.ready;
         if (reg && reg.showNotification) {
           const swOptions: any = {
@@ -299,4 +354,65 @@ export async function deliverNotification(
   }
 
   return newItem;
+}
+
+export async function scheduleDelayedBackgroundTest(
+  userId?: string,
+  delaySeconds: number = 5,
+  type: string = 'night'
+): Promise<{ success: boolean; message: string }> {
+  const effectiveUid = getOrCreateClientUserId(userId);
+
+  // Template for test reminder
+  const reminderCopy =
+    type === 'morning'
+      ? {
+          title: 'Good morning 👋',
+          message: 'What’s happening in your business today? Tell Karra and let it keep track for you.',
+          actionType: 'CHAT_KARRA',
+          actionLabel: 'Tell Karra',
+        }
+      : type === 'day'
+      ? {
+          title: 'Don’t let today’s sales slip away.',
+          message: 'Made a sale or spent money? Tell Karra in 10 seconds.',
+          actionType: 'RECORD_SALE',
+          actionLabel: 'Record Activity',
+        }
+      : {
+          title: 'Before you call it a day… 🌙',
+          message: 'Take a quick moment to tell Karra what happened today in your business.',
+          actionType: 'RECORD_SALE',
+          actionLabel: 'Close Books',
+        };
+
+  // 1. Schedule local service worker reminder (fires even if user switches apps or locks phone)
+  await scheduleAwayReminderInServiceWorker({
+    id: `away_test_${Date.now()}`,
+    delayMs: Math.max(1, delaySeconds) * 1000,
+    reminder: {
+      ...reminderCopy,
+      category: `${type.toUpperCase()}_REMINDER`,
+    },
+    force: true, // Deliver to lock screen / system notifications
+  });
+
+  // 2. Also register on backend push server for remote Web Push
+  try {
+    const res = await fetch('/api/push/schedule-test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId: effectiveUid, delaySeconds, type }),
+    });
+    const data = await res.json();
+    return {
+      success: true,
+      message: data.message || `Reminder scheduled in ${delaySeconds} seconds! Switch apps or lock your phone now.`,
+    };
+  } catch {
+    return {
+      success: true,
+      message: `Reminder scheduled in ${delaySeconds} seconds! Switch apps or lock your phone now to test.`,
+    };
+  }
 }

@@ -63,7 +63,6 @@ interface AdminDashboardViewProps {
 }
 
 const FOUNDER_EMAIL = 'olamidefelix54@gmail.com';
-const FOUNDER_KEY = '@Felixrex1';
 
 export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
   onShowToast,
@@ -108,9 +107,9 @@ export const AdminDashboardView: React.FC<AdminDashboardViewProps> = ({
         localStorage.getItem('karra_admin_token') ||
         sessionStorage.getItem('karra_admin_auth');
       if (stored && stored.trim()) return stored.trim();
-      return FOUNDER_KEY;
+      return '';
     } catch {
-      return FOUNDER_KEY;
+      return '';
     }
   };
 

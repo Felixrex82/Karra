@@ -73,6 +73,12 @@ import {
   saveStoredNotifications,
   registerServiceWorker,
   deliverNotification,
+  subscribePhonePushNotifications,
+  requestBrowserNotificationPermission,
+  scheduleDelayedBackgroundTest,
+  getOrCreateClientUserId,
+  scheduleAwayReminderInServiceWorker,
+  cancelAwayRemindersInServiceWorker,
 } from './lib/notificationService';
 import { evaluateNotificationDecision } from './engine/notificationEngine';
 
@@ -213,31 +219,109 @@ export default function App() {
 
   // Load user notifications and preferences on auth state change
   useEffect(() => {
-    const uid = user?.uid;
-    const loadedPrefs = loadNotificationPreferences(uid);
+    const effectiveUid = getOrCreateClientUserId(user?.uid);
+    const loadedPrefs = loadNotificationPreferences(effectiveUid);
     setNotificationPreferences(loadedPrefs);
-    const localNotifs = loadStoredNotifications(uid);
+    const localNotifs = loadStoredNotifications(effectiveUid);
     setNotifications(localNotifs);
 
-    // Sync from server if online
-    if (uid && !user.isAnonymous) {
-      fetch(`/api/notifications?userId=${encodeURIComponent(uid)}`)
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.success) {
-            if (data.preferences) {
-              setNotificationPreferences(data.preferences);
-              saveNotificationPreferences(data.preferences, uid);
-            }
-            if (Array.isArray(data.notifications) && data.notifications.length > 0) {
-              setNotifications(data.notifications);
-              saveStoredNotifications(data.notifications, uid);
-            }
-          }
-        })
-        .catch(() => {});
+    // If notification permission is granted, ensure phone push subscription is active on backend
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+      subscribePhonePushNotifications(effectiveUid).catch(() => {});
     }
-  }, [user?.uid, user?.isAnonymous]);
+
+    // Sync from server if online
+    fetch(`/api/notifications?userId=${encodeURIComponent(effectiveUid)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          if (data.preferences) {
+            setNotificationPreferences(data.preferences);
+            saveNotificationPreferences(data.preferences, effectiveUid);
+          }
+          if (Array.isArray(data.notifications) && data.notifications.length > 0) {
+            setNotifications(data.notifications);
+            saveStoredNotifications(data.notifications, effectiveUid);
+          }
+        }
+      })
+      .catch(() => {});
+  }, [user?.uid]);
+
+  // Keep server and service worker updated with user presence for away-from-app reminders
+  useEffect(() => {
+    const effectiveUid = getOrCreateClientUserId(user?.uid);
+
+    const reportPresence = (isAway: boolean = false) => {
+      try {
+        const todayStr = getTodayDateStr();
+        const eventsTodayCount = (state.events || []).filter((e) => e.date === todayStr).length;
+        fetch('/api/notifications/presence', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: effectiveUid,
+            userEmail: user?.email || userProfile?.email,
+            businessName: userProfile?.businessName || state.businessName,
+            lastActiveTimestamp: new Date().toISOString(),
+            eventsTodayCount,
+            isAway,
+          }),
+        }).catch(() => {});
+      } catch {}
+    };
+
+    // User is active in app on mount
+    reportPresence(false);
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // Merchant left the app (tab hidden, phone locked, or switched apps)
+        reportPresence(true);
+
+        // Schedule an away-from-app reminder in the Service Worker
+        if (notificationPreferences.enabled && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+          const todayStr = getTodayDateStr();
+          const eventsToday = (state.events || []).filter((e) => e.date === todayStr);
+
+          const reminder = eventsToday.length === 0
+            ? {
+                title: 'What happened in your business today? 📊',
+                message: 'Made a sale, collected money, or bought stock? Tell Karra in 10 seconds to keep your records fresh.',
+                category: 'DAY_REMINDER',
+                actionType: 'RECORD_SALE',
+                actionLabel: 'Tell Karra',
+              }
+            : {
+                title: 'Before you call it a day… 🌙',
+                message: 'Karra is ready to close your books. Record any remaining sales, expenses, or payments for today.',
+                category: 'NIGHT_REMINDER',
+                actionType: 'RECORD_SALE',
+                actionLabel: 'Close Books',
+              };
+
+          // Schedule away reminder after 10 minutes of away time
+          scheduleAwayReminderInServiceWorker({
+            id: 'karra_away_reminder',
+            delayMs: 10 * 60 * 1000,
+            reminder,
+          });
+        }
+      } else if (document.visibilityState === 'visible') {
+        // Merchant returned to the app: clear pending away reminders
+        reportPresence(false);
+        cancelAwayRemindersInServiceWorker('karra_away_reminder');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', () => reportPresence(true));
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', () => reportPresence(true));
+    };
+  }, [user?.uid, state.events?.length, notificationPreferences.enabled]);
 
   // Handle action click from notification drawer or push notification
   const handleNotificationAction = (actionType: string) => {
@@ -316,7 +400,14 @@ export default function App() {
   const handleTriggerTestNotification = async (
     type: 'morning' | 'day' | 'night' | 'first_use' | 'inactive'
   ) => {
-    const uid = user?.uid || 'merchant';
+    const uid = getOrCreateClientUserId(user?.uid);
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission !== 'granted') {
+      const perm = await requestBrowserNotificationPermission();
+      if (perm === 'granted') {
+        subscribePhonePushNotifications(uid).catch(() => {});
+      }
+    }
+
     try {
       // Send background push to phone
       fetch('/api/push/test-phone', {
@@ -376,6 +467,37 @@ export default function App() {
     showToast(`Test ${type} reminder dispatched to your phone.`, 'success');
   };
 
+  const handleSendDelayedBackgroundTest = async (
+    type: 'morning' | 'day' | 'night' | 'first_use' | 'inactive' = 'night',
+    delaySeconds: number = 5
+  ) => {
+    const uid = user?.uid || 'merchant';
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission !== 'granted') {
+        const perm = await requestBrowserNotificationPermission();
+        if (perm !== 'granted') {
+          showToast('Please allow notifications so reminders can reach your phone lock screen.', 'warning');
+          return;
+        }
+      }
+      await subscribePhonePushNotifications(uid).catch(() => {});
+    }
+
+    try {
+      const res = await scheduleDelayedBackgroundTest(uid, delaySeconds, type);
+      if (res.success) {
+        showToast(
+          `Reminder scheduled in ${delaySeconds} seconds! Lock your phone or switch apps now to test.`,
+          'success'
+        );
+      } else {
+        showToast(res.message || 'Failed to schedule delayed reminder', 'warning');
+      }
+    } catch {
+      showToast('Error scheduling delayed background reminder.', 'warning');
+    }
+  };
+
   // Periodic intelligent reminder evaluation
   useEffect(() => {
     if (!user || !notificationPreferences.enabled) return;
@@ -424,7 +546,8 @@ export default function App() {
         );
 
         setNotifications((prev) => [delivered, ...prev]);
-        setActivePhoneBanner(delivered);
+        // Do not popup disruptive activePhoneBanner while user is actively working inside the app.
+        // Reminders are delivered to their phone lock screen / system notifications when AWAY from the app.
 
         // Sync with backend
         try {
@@ -2534,6 +2657,7 @@ export default function App() {
         }}
         onOpenAction={handleNotificationAction}
         onTriggerTest={handleTriggerTestNotification}
+        onSendDelayedBackgroundTest={handleSendDelayedBackgroundTest}
       />
 
       {/* 6. Business Notification Settings Modal */}
@@ -2544,6 +2668,7 @@ export default function App() {
         preferences={notificationPreferences}
         onSavePreferences={handleSaveNotificationPreferences}
         onSendTestNotification={handleTriggerTestNotification}
+        onSendDelayedBackgroundTest={handleSendDelayedBackgroundTest}
         onShowToast={showToast}
       />
 

@@ -3,12 +3,20 @@ import fs from 'fs';
 import path from 'path';
 import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore, collection, getDocs, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
-import { GoogleGenAI } from '@google/genai';
 import {
   generateContentWithRetryAndFallback,
   buildInterpretPrompt,
   buildAskSystemPrompt,
 } from './geminiEngine';
+import { getGeminiClient } from './geminiClient';
+import {
+  getGeminiApiKey,
+  isGeminiConfigured,
+  getAdminPassword,
+  isAdminPasswordConfigured,
+  getAdminSecret,
+  getEnvDiagnostics,
+} from './config/env';
 import {
   FOUNDER_EMAIL,
   validateInvitationCode,
@@ -39,6 +47,8 @@ import {
   evaluateAndDispatchForUser,
   sendTestNotification,
   getNotificationAnalytics,
+  updateUserPresence,
+  scheduleDelayedPush,
 } from './notificationEngine';
 import {
   getOrGenerateVapidKeys,
@@ -51,29 +61,22 @@ export { FOUNDER_EMAIL };
 // Active in-memory admin sessions for instant lookup
 const activeAdminSessions = new Map<string, { email: string; expiresAt: number }>();
 
-function getSigningKey(): string {
-  const secret = (process.env.ADMIN_SECRET || '').trim();
-  if (secret) return secret;
-  const password = (process.env.ADMIN_PASSWORD || '').trim().replace(/^["']|["']$/g, '');
-  if (password) return password;
-  return 'karra-platform-founder-auth-salt';
-}
-
 export function createAdminSession(email: string): string {
   const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+  const normalizedEmail = email.trim().toLowerCase();
   const payload = {
-    email: email.trim().toLowerCase(),
+    email: normalizedEmail,
     exp: expiresAt,
     nonce: crypto.randomBytes(8).toString('hex'),
   };
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
   const signature = crypto
-    .createHmac('sha256', getSigningKey())
+    .createHmac('sha256', getAdminSecret())
     .update(payloadB64)
     .digest('base64url');
 
   const token = `karra_tok_${payloadB64}.${signature}`;
-  activeAdminSessions.set(token, { email, expiresAt });
+  activeAdminSessions.set(token, { email: normalizedEmail, expiresAt });
   return token;
 }
 
@@ -196,37 +199,27 @@ export function isValidAdminSession(token: string, email?: string): boolean {
   if (!token) return false;
   const trimmedToken = token.trim();
 
-  // 1. Direct secret / founder key match (founder secret is definitive proof of admin rights)
-  const candidateKeys = [
-    '@Felixrex1',
-    'founder_active_admin',
-    (process.env.ADMIN_SECRET || '').trim(),
-    (process.env.ADMIN_PASSWORD || '').trim().replace(/^["']|["']$/g, ''),
-    (process.env.VITE_ADMIN_PASSWORD || '').trim(),
-    (process.env.KARRA_ADMIN_PASSWORD || '').trim(),
-  ].filter(Boolean);
-
-  if (candidateKeys.some((key) => trimmedToken === key)) {
+  // 1. In-memory session map check (fast path)
+  const session = activeAdminSessions.get(trimmedToken);
+  if (session) {
+    if (Date.now() > session.expiresAt) {
+      activeAdminSessions.delete(trimmedToken);
+      return false;
+    }
+    if (email && session.email !== email.trim().toLowerCase()) {
+      return false;
+    }
     return true;
   }
 
-  // 1b. Direct founder token match
-  if (
-    trimmedToken.startsWith('karra_adm_') ||
-    trimmedToken.startsWith('karra_admin_') ||
-    trimmedToken.includes('founder')
-  ) {
-    return true;
-  }
-
-  // 2. Stateless signed HMAC token
+  // 2. Stateless signed HMAC token (karra_tok_<payloadB64>.<signature>)
   if (trimmedToken.startsWith('karra_tok_')) {
     try {
       const tokenBody = trimmedToken.slice('karra_tok_'.length);
       const [payloadB64, signature] = tokenBody.split('.');
       if (payloadB64 && signature) {
         const expectedSig = crypto
-          .createHmac('sha256', getSigningKey())
+          .createHmac('sha256', getAdminSecret())
           .update(payloadB64)
           .digest('base64url');
 
@@ -235,28 +228,16 @@ export function isValidAdminSession(token: string, email?: string): boolean {
         if (sigBuf.length === expectedBuf.length && crypto.timingSafeEqual(sigBuf, expectedBuf)) {
           const payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
           if (payload && payload.exp && Date.now() < payload.exp) {
+            if (email && payload.email && payload.email !== email.trim().toLowerCase()) {
+              return false;
+            }
             return true;
           }
         }
       }
     } catch {
-      // Fall through
+      // Fall through to reject
     }
-  }
-
-  // 3. In-memory session map check
-  const session = activeAdminSessions.get(trimmedToken);
-  if (session) {
-    if (Date.now() > session.expiresAt) {
-      activeAdminSessions.delete(trimmedToken);
-      return false;
-    }
-    return true;
-  }
-
-  // 4. Founder email directly
-  if (email && email.trim().toLowerCase() === FOUNDER_EMAIL.toLowerCase()) {
-    return true;
   }
 
   return false;
@@ -270,22 +251,6 @@ function verifyAdminRequest(req: any): boolean {
   const adminEmail = (req.headers?.['x-admin-email'] as string) || '';
 
   return isValidAdminSession(adminSecret, adminEmail);
-}
-
-// Lazy-initialized Gemini client
-let genAIClient: GoogleGenAI | null = null;
-function getGenAI(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) return null;
-  if (!genAIClient) {
-    genAIClient = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: { 'User-Agent': 'aistudio-build' },
-      },
-    });
-  }
-  return genAIClient;
 }
 
 /**
@@ -357,12 +322,14 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
     const [rawPathname, rawQueryString] = rawUrl.split('?');
     const urlParams = new URLSearchParams(rawQueryString || '');
 
-    let targetPath =
+    let rawTargetPath =
       urlParams.get('__path') ||
       urlParams.get('path') ||
       req.query?.__path ||
       req.query?.path ||
       '';
+
+    let targetPath = Array.isArray(rawTargetPath) ? rawTargetPath.join('/') : String(rawTargetPath || '');
 
     if (!targetPath) {
       const routeMatches = req.headers?.['x-now-route-matches'] as string;
@@ -380,7 +347,7 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
     }
 
     // Clean leading slashes
-    targetPath = targetPath.replace(/^\/+/, '');
+    targetPath = String(targetPath || '').replace(/^\/+/, '');
     const method = (req.method || 'GET').toUpperCase();
 
     // -------------------------------------------------------------
@@ -391,7 +358,9 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
     if (targetPath === 'health' || targetPath === '') {
       return sendJson(res, 200, {
         status: 'ok',
-        geminiConfigured: Boolean(process.env.GEMINI_API_KEY),
+        service: 'karra-platform-api',
+        geminiConfigured: isGeminiConfigured(),
+        adminPasswordConfigured: isAdminPasswordConfigured(),
         timestamp: new Date().toISOString(),
       });
     }
@@ -415,51 +384,41 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
         });
       }
 
+      const configuredPassword = getAdminPassword();
+      if (!configuredPassword) {
+        return sendJson(res, 503, {
+          success: false,
+          error: 'ADMIN_PASSWORD is not configured on the server. Admin access is disabled.',
+          code: 'ADMIN_PASSWORD_NOT_CONFIGURED',
+        });
+      }
+
       const rawEmail = req.body?.email || '';
       const rawPass = req.body?.password || '';
       const normalizedEmail = (rawEmail || '').trim().toLowerCase();
       const trimmedPassword = (rawPass || '').trim();
-      const cleanEnteredPassword = trimmedPassword.replace(/^["']|["']$/g, '').trim();
-
-      const candidateExpected = new Set<string>([
-        '@Felixrex1',
-        '@felixrex1',
-      ]);
-
-      const envVars = [
-        process.env.ADMIN_PASSWORD,
-        process.env.ADMIN_SECRET,
-        process.env.VITE_ADMIN_PASSWORD,
-        process.env.KARRA_ADMIN_PASSWORD,
-        process.env.FOUNDER_PASSWORD,
-      ];
-
-      for (const val of envVars) {
-        if (val && typeof val === 'string') {
-          const t = val.trim();
-          if (t) {
-            candidateExpected.add(t);
-            const unquoted = t.replace(/^["']|["']$/g, '').trim();
-            if (unquoted) candidateExpected.add(unquoted);
-          }
-        }
-      }
+      const cleanEnteredPassword = trimmedPassword.replace(/^["']+|["']+$/g, '').trim();
 
       const configuredAdminEmail = (process.env.ADMIN_EMAIL || FOUNDER_EMAIL).trim().toLowerCase();
       const isEmailValid =
         normalizedEmail === FOUNDER_EMAIL.toLowerCase() || normalizedEmail === configuredAdminEmail;
 
-      const enteredVariants = [rawPass, trimmedPassword, cleanEnteredPassword].filter(Boolean);
-      let isPasswordValid = false;
-      for (const entered of enteredVariants) {
-        if (candidateExpected.has(entered)) {
-          isPasswordValid = true;
-          break;
-        }
-      }
+      const expectedBuf = Buffer.from(configuredPassword);
+      const enteredBuf = Buffer.from(cleanEnteredPassword);
+      const isPasswordValid =
+        expectedBuf.length === enteredBuf.length &&
+        crypto.timingSafeEqual(expectedBuf, enteredBuf);
 
       if (isEmailValid && isPasswordValid) {
         const sessionToken = createAdminSession(normalizedEmail);
+        try {
+          const isProd = process.env.NODE_ENV === 'production';
+          res.setHeader(
+            'Set-Cookie',
+            `karra_admin_token=${sessionToken}; Path=/; HttpOnly; SameSite=Lax${isProd ? '; Secure' : ''}`
+          );
+        } catch {}
+
         return sendJson(res, 200, {
           success: true,
           token: sessionToken,
@@ -489,6 +448,17 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
         authorized: true,
         role: 'admin',
         email: FOUNDER_EMAIL,
+      });
+    }
+
+    // Safe Admin Environment Diagnostics (Strictly Admin-Only)
+    if (targetPath === 'admin/diagnostics') {
+      if (!verifyAdminRequest(req)) {
+        return sendJson(res, 401, { success: false, error: 'Unauthorized: Admin required.' });
+      }
+      return sendJson(res, 200, {
+        success: true,
+        diagnostics: getEnvDiagnostics(),
       });
     }
 
@@ -1087,6 +1057,26 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
       });
     }
 
+    // N6b. Notifications: Update User Activity & Presence
+    if (targetPath === 'notifications/presence') {
+      if (method !== 'POST') {
+        return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
+      }
+      const { userId, userEmail, businessName, lastActiveTimestamp, eventsTodayCount, isAway } = req.body || {};
+      if (!userId) {
+        return sendJson(res, 400, { success: false, error: 'userId is required.' });
+      }
+      updateUserPresence({
+        userId,
+        userEmail,
+        businessName,
+        lastActiveTimestamp: lastActiveTimestamp || new Date().toISOString(),
+        eventsTodayCount: typeof eventsTodayCount === 'number' ? eventsTodayCount : 0,
+        isAway: typeof isAway === 'boolean' ? isAway : false,
+      });
+      return sendJson(res, 200, { success: true });
+    }
+
     // N7. Web Push: Get VAPID Public Key for Phone Subscription
     if (targetPath === 'push/vapid-public-key') {
       const keys = getOrGenerateVapidKeys();
@@ -1176,6 +1166,27 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
       });
     }
 
+    // N10. Web Push: Schedule Delayed Test Push (e.g. 5 seconds delay so user can lock phone/leave app)
+    if (targetPath === 'push/schedule-test') {
+      if (method !== 'POST') {
+        return sendJson(res, 405, { success: false, error: 'Method Not Allowed' });
+      }
+      const { userId, delaySeconds = 5, type = 'night' } = req.body || {};
+      if (!userId) {
+        return sendJson(res, 400, { success: false, error: 'userId is required.' });
+      }
+
+      scheduleDelayedPush(userId, Number(delaySeconds) || 5, type).catch((err) => {
+        console.warn('[DelayedPush] Delivery error:', err?.message);
+      });
+
+      return sendJson(res, 200, {
+        success: true,
+        delaySeconds: Number(delaySeconds) || 5,
+        message: `Reminder scheduled in ${delaySeconds} seconds! Switch apps or lock your screen now to see the reminder arrive.`,
+      });
+    }
+
     // O. Gemini: Interpret
     if (targetPath === 'gemini/interpret') {
       if (method !== 'POST') {
@@ -1183,15 +1194,16 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
       }
       const { userInput, memoryContext, recentEventsContext, conversationState } = req.body || {};
       if (!userInput || typeof userInput !== 'string') {
-        return sendJson(res, 400, { error: 'userInput is required' });
+        return sendJson(res, 400, { success: false, error: 'userInput is required' });
       }
 
-      const ai = getGenAI();
+      const ai = getGeminiClient();
       if (!ai) {
-        return sendJson(res, 200, {
+        return sendJson(res, 503, {
           success: false,
-          fallback: true,
-          reason: 'GEMINI_API_KEY not configured, using local deterministic NLP engine',
+          error: 'GEMINI_API_KEY is not configured on the server.',
+          code: 'GEMINI_NOT_CONFIGURED',
+          message: 'I’m temporarily unable to process that request. Please try again.',
         });
       }
 
@@ -1202,13 +1214,25 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
           contents: prompt,
           config: { responseMimeType: 'application/json', temperature: 0.1 },
         });
+
+        if (!response || !response.text) {
+          return sendJson(res, 502, {
+            success: false,
+            error: 'AI service returned an empty response.',
+            code: 'GEMINI_INVALID_RESPONSE',
+            message: 'I’m temporarily unable to process that request. Please try again.',
+          });
+        }
+
         const parsed = JSON.parse(response.text || '{}');
         return sendJson(res, 200, { success: true, data: parsed });
       } catch (err: any) {
-        return sendJson(res, 200, {
+        console.error('[Gemini Interpret Error]:', err?.message || err);
+        return sendJson(res, 503, {
           success: false,
-          fallback: true,
-          reason: 'AI service experiencing temporary demand spike; fallback to deterministic rules',
+          error: 'AI service request failed. Please try again later.',
+          code: 'GEMINI_REQUEST_FAILED',
+          message: 'I’m temporarily unable to process that request. Please try again.',
         });
       }
     }
@@ -1228,18 +1252,19 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
         rules,
         unitRelationships,
         recentEvents,
-      } = req.body;
+      } = req.body || {};
 
       if (!question) {
-        return sendJson(res, 400, { error: 'question is required' });
+        return sendJson(res, 400, { success: false, error: 'question is required' });
       }
 
-      const ai = getGenAI();
+      const ai = getGeminiClient();
       if (!ai) {
-        return sendJson(res, 200, {
+        return sendJson(res, 503, {
           success: false,
-          fallback: true,
-          reason: 'GEMINI_API_KEY not configured, will use deterministic answer generator',
+          error: 'GEMINI_API_KEY is not configured on the server.',
+          code: 'GEMINI_NOT_CONFIGURED',
+          answer: 'I’m temporarily unable to process that request. Please try again.',
         });
       }
 
@@ -1264,28 +1289,41 @@ export async function dispatchApiRequest(req: any, res: any): Promise<void> {
           config: { responseMimeType: 'application/json', temperature: 0.1 },
         });
 
+        if (!response || !response.text) {
+          return sendJson(res, 502, {
+            success: false,
+            error: 'AI service returned an empty response.',
+            code: 'GEMINI_INVALID_RESPONSE',
+            answer: 'I’m temporarily unable to process that request. Please try again.',
+          });
+        }
+
         let parsed: any = {};
         try {
           parsed = JSON.parse(response.text || '{}');
         } catch {
-          parsed = { answer: response.text || 'I have noted that down for your business.' };
+          parsed = { answer: response.text };
         }
+
+        const finalAnswer = parsed.answer || response.text || 'I have noted that down for your business.';
 
         return sendJson(res, 200, {
           success: true,
-          answer: parsed.answer || 'I have noted that down for your business.',
+          answer: finalAnswer,
           data: parsed,
-          memories: parsed.memories || [],
+          memories: Array.isArray(parsed.memories) ? parsed.memories : [],
           recordedEvent: parsed.recordedEvent || null,
           correctedEvent: parsed.correctedEvent || null,
           deletedEventId: parsed.deletedEventId || null,
           structuredAction: parsed.structuredAction || null,
         });
       } catch (err: any) {
-        return sendJson(res, 200, {
+        console.error('[Gemini Ask Error]:', err?.message || err);
+        return sendJson(res, 503, {
           success: false,
-          fallback: true,
-          reason: 'AI service experiencing temporary demand spike; using deterministic calculation',
+          error: 'AI service request failed. Please try again later.',
+          code: 'GEMINI_REQUEST_FAILED',
+          answer: 'I’m temporarily unable to process that request. Please try again.',
         });
       }
     }

@@ -33,6 +33,7 @@ interface NotificationSettingsModalProps {
   preferences: NotificationPreferences;
   onSavePreferences: (updated: NotificationPreferences) => void;
   onSendTestNotification?: (type: 'morning' | 'day' | 'night' | 'first_use' | 'inactive') => void;
+  onSendDelayedBackgroundTest?: (type: 'morning' | 'day' | 'night' | 'first_use' | 'inactive', delaySeconds?: number) => void;
   onShowToast?: (message: string, type?: 'info' | 'success' | 'warning') => void;
 }
 
@@ -43,6 +44,7 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
   preferences,
   onSavePreferences,
   onSendTestNotification,
+  onSendDelayedBackgroundTest,
   onShowToast,
 }) => {
   const [localPrefs, setLocalPrefs] = useState<NotificationPreferences>(preferences);
@@ -595,6 +597,33 @@ export const NotificationSettingsModal: React.FC<NotificationSettingsModalProps>
               </div>
             </div>
           )}
+
+          {/* Away-from-App & Lock Screen Testing */}
+          <div className="p-4 rounded-xl bg-indigo-500/10 dark:bg-indigo-950/40 border border-indigo-500/30 space-y-2.5">
+            <div className="flex items-center space-x-2">
+              <Smartphone className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              <span className="text-xs font-bold text-indigo-900 dark:text-indigo-200">
+                Lock Screen & Away-from-App Reminders
+              </span>
+            </div>
+            <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              Karra alerts your phone even when you are not in the app, so you never forget to close your day. Test it now:
+            </p>
+            <div className="pt-1 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  if (onSendDelayedBackgroundTest) {
+                    onSendDelayedBackgroundTest('night', 5);
+                  }
+                }}
+                className="px-3.5 py-2 text-xs font-bold rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white shadow-xs cursor-pointer flex items-center space-x-2 transition-all active:scale-95"
+              >
+                <Bell className="w-3.5 h-3.5" />
+                <span>Test Reminder in 5 Seconds (Lock phone or switch apps to test) 🔔</span>
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* Footer */}

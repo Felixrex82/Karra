@@ -12,7 +12,7 @@ export async function generateContentWithRetryAndFallback(
   }
 ) {
   // Candidate models compliant with system skills guideline (fast, resilient models prioritized)
-  const candidateModels = ['gemini-3.1-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash'];
+  const candidateModels = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.1-flash-lite'];
   let lastError: any = null;
 
   // Enforce low temperature for deterministic reasoning and zero hallucination

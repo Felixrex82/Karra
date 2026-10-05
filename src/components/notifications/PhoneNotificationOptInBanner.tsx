@@ -73,20 +73,16 @@ export const PhoneNotificationOptInBanner: React.FC<PhoneNotificationOptInBanner
         }
 
         if (onShowToast) {
-          onShowToast('Phone notifications enabled! Sending WhatsApp-style reminder to your screen.', 'success');
+          onShowToast(
+            'Phone reminders enabled! Karra will notify your lock screen when you are away from the app.',
+            'success'
+          );
         }
 
-        // 4. Fire immediate test morning reminder
-        if (onSendTestNotification) {
-          setTimeout(() => {
-            onSendTestNotification('morning');
-          }, 400);
-        }
-
-        // Auto dismiss banner after 5 seconds on success
+        // Auto dismiss banner after 4 seconds on success
         setTimeout(() => {
           setIsDismissed(true);
-        }, 5000);
+        }, 4000);
       } else if (result === 'denied') {
         if (onShowToast) {
           onShowToast(

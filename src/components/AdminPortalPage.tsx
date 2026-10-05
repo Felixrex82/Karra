@@ -22,7 +22,6 @@ interface AdminPortalPageProps {
 }
 
 const FOUNDER_EMAIL = 'olamidefelix54@gmail.com';
-const FOUNDER_PASSWORD = '@Felixrex1';
 const ADMIN_SESSION_KEY = 'karra_admin_auth_token';
 
 export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
@@ -57,27 +56,28 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
         return;
       }
 
-      // If already marked authenticated locally, keep founder authenticated
-      setIsAdminAuthenticated(true);
-
       // Best-effort server verification
       fetch('/api/admin/verify', {
         headers: {
           'x-admin-secret': token,
           'Authorization': `Bearer ${token}`,
-          'x-admin-email': FOUNDER_EMAIL,
+          'x-admin-email': email || FOUNDER_EMAIL,
         },
       })
         .then((res) => {
-          if (res.status === 401) {
-            // Only revoke if explicitly forbidden
+          if (res.status === 401 || res.status === 403) {
+            // Revoke if explicitly rejected by server
             sessionStorage.removeItem(ADMIN_SESSION_KEY);
             sessionStorage.removeItem('karra_admin_token');
+            localStorage.removeItem(ADMIN_SESSION_KEY);
+            localStorage.removeItem('karra_admin_token');
             setIsAdminAuthenticated(false);
+          } else if (res.ok) {
+            setIsAdminAuthenticated(true);
           }
         })
         .catch(() => {
-          // Keep active on network or server deployment blips
+          // Keep active on temporary network blips if token exists
         });
     } catch {
       setIsAdminAuthenticated(false);
@@ -91,7 +91,6 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
 
     const normalizedEmail = email.trim().toLowerCase();
     const trimmedPass = password.trim();
-    const cleanEnteredPassword = trimmedPass.replace(/^["']|["']$/g, '').trim();
 
     if (!normalizedEmail || !trimmedPass) {
       setErrorMessage('Please enter both your founder email and admin password.');
@@ -99,47 +98,6 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
       return;
     }
 
-    if (normalizedEmail !== FOUNDER_EMAIL.toLowerCase()) {
-      setErrorMessage('Access denied: Invalid admin email. Access is restricted to the platform founder.');
-      setIsSubmitting(false);
-      return;
-    }
-
-    // 1. Check designated hardcoded founder password for instant guaranteed access
-    const isFounderPasswordMatch =
-      trimmedPass === FOUNDER_PASSWORD ||
-      cleanEnteredPassword === FOUNDER_PASSWORD ||
-      cleanEnteredPassword.toLowerCase() === FOUNDER_PASSWORD.toLowerCase();
-
-    if (isFounderPasswordMatch) {
-      let token: string = FOUNDER_PASSWORD;
-      try {
-        const res = await fetch('/api/admin/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email: normalizedEmail, password: trimmedPass }),
-        });
-        const d = await res.json();
-        if (d?.token) {
-          token = d.token;
-        }
-      } catch {
-        token = FOUNDER_PASSWORD;
-      }
-
-      sessionStorage.setItem('karra_admin_token', token);
-      localStorage.setItem('karra_admin_token', token);
-      sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
-      localStorage.setItem(ADMIN_SESSION_KEY, 'true');
-
-      await signInAsFounder();
-      setIsAdminAuthenticated(true);
-      setIsSubmitting(false);
-      if (onShowToast) onShowToast('Founder access verified! Welcome to Karra Console.', 'success');
-      return;
-    }
-
-    // 2. Fallback to server verification for custom environment variable passwords
     try {
       const res = await fetch('/api/admin/login', {
         method: 'POST',
@@ -148,32 +106,29 @@ export const AdminPortalPage: React.FC<AdminPortalPageProps> = ({
       });
 
       let data: any = {};
-      let rawText = '';
       try {
-        rawText = await res.text();
-        data = JSON.parse(rawText);
+        data = await res.json();
       } catch {
-        data = { error: rawText };
+        data = {};
       }
 
-      if (!res.ok || !data.success) {
-        setErrorMessage(data?.error || `Access denied (${res.status}): Invalid admin credentials. Enter ${FOUNDER_PASSWORD}.`);
+      if (!res.ok || !data.success || !data.token) {
+        setErrorMessage(data?.error || 'Invalid admin credentials. Access denied.');
         setIsSubmitting(false);
         return;
       }
 
-      if (data.token) {
-        sessionStorage.setItem('karra_admin_token', data.token);
-        localStorage.setItem('karra_admin_token', data.token);
-      }
-
-      await signInAsFounder();
+      // Secure session storage on successful server verification
+      sessionStorage.setItem('karra_admin_token', data.token);
+      localStorage.setItem('karra_admin_token', data.token);
       sessionStorage.setItem(ADMIN_SESSION_KEY, 'true');
       localStorage.setItem(ADMIN_SESSION_KEY, 'true');
+
+      await signInAsFounder();
       setIsAdminAuthenticated(true);
       if (onShowToast) onShowToast('Admin authentication verified.', 'success');
     } catch (err: any) {
-      setErrorMessage(`Authentication server temporarily unavailable. Enter ${FOUNDER_PASSWORD} to proceed.`);
+      setErrorMessage('Authentication server is temporarily unreachable. Please try again.');
     } finally {
       setIsSubmitting(false);
     }

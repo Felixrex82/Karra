@@ -31,6 +31,7 @@ interface NotificationCenterProps {
   onOpenSettings: () => void;
   onOpenAction: (actionType: string) => void;
   onTriggerTest?: (type: 'morning' | 'day' | 'night' | 'first_use' | 'inactive') => void;
+  onSendDelayedBackgroundTest?: (type?: any, delaySeconds?: number) => void;
 }
 
 export const NotificationCenter: React.FC<NotificationCenterProps> = ({
@@ -41,6 +42,7 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
   onOpenSettings,
   onOpenAction,
   onTriggerTest,
+  onSendDelayedBackgroundTest,
 }) => {
   const [filter, setFilter] = useState<'all' | 'unread' | 'reminders'>('all');
 
@@ -256,6 +258,31 @@ export const NotificationCenter: React.FC<NotificationCenterProps> = ({
               Reminders
             </button>
           </div>
+
+          {/* Away-from-App Info & Quick Test Action */}
+          {onSendDelayedBackgroundTest && (
+            <div className="mx-5 mt-3 mb-1 p-3 rounded-xl bg-indigo-500/10 dark:bg-indigo-950/30 border border-indigo-500/20 text-xs flex items-center justify-between">
+              <div className="space-y-0.5 max-w-[230px]">
+                <p className="font-bold text-indigo-900 dark:text-indigo-200 flex items-center space-x-1.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-indigo-500 animate-pulse" />
+                  <span>Phone Lock Screen Reminders</span>
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-snug">
+                  Alerts your phone when you are away from Karra so you never forget today’s sales.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  onSendDelayedBackgroundTest('night', 5);
+                  onClose();
+                }}
+                className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] shadow-xs cursor-pointer shrink-0 transition-transform active:scale-95"
+              >
+                Test Away (5s) 🔔
+              </button>
+            </div>
+          )}
 
           {/* Quick Test on Phone Bar */}
           {onTriggerTest && (

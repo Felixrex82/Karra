@@ -250,23 +250,24 @@ export function evaluateNotificationDecision(
   }
 
   // 3. User Recency & Active Suppression
-  // "Do not send a daytime reminder if the user has just been actively using Karra."
-  // "Do not send a night reminder if the user has already completed meaningful activity recently."
+  // Reminders are specifically designed to alert the user when they are AWAY from the app.
+  // We suppress if the user has been active recently in the app and is not marked as away.
   if (preferences.suppressWhenRecentlyActive && lastActiveTimestamp) {
     const lastActiveTime = new Date(lastActiveTimestamp).getTime();
     const minutesSinceActive = (now.getTime() - lastActiveTime) / (1000 * 60);
 
-    if (minutesSinceActive >= 0 && minutesSinceActive < 60) {
+    if (!context.isUserAway && minutesSinceActive >= 0 && minutesSinceActive < 60) {
       return {
         shouldSend: false,
         reason: 'recently_active',
-        suppressedReason: `User was active ${Math.round(minutesSinceActive)} minutes ago. Unnecessary reminder suppressed.`,
+        suppressedReason: `Merchant has been active within the last ${Math.round(minutesSinceActive)} minutes. Notification suppressed.`,
       };
     }
   }
 
   // 4. Onboarding & New User Check (Day 0)
-  // "Day 0: Welcome/onboarding notification where appropriate. Day 1 onward: Normal reminder logic."
+  // Day 0: Welcome onboarding first. If user is away from app during scheduled window,
+  // allow gentle check-in reminders so new merchants get real reminder value immediately.
   const signupDate = signupTimestamp ? new Date(signupTimestamp) : null;
   const hoursSinceSignup = signupDate ? (now.getTime() - signupDate.getTime()) / (1000 * 60 * 60) : 999;
   const isDayZero = hoursSinceSignup >= 0 && hoursSinceSignup < 24;
@@ -286,12 +287,8 @@ export function evaluateNotificationDecision(
         reason: 'day_0_welcome_onboarding',
       };
     }
-    // Suppress daily scheduled reminders on Day 0 to avoid overwhelming the new user
-    return {
-      shouldSend: false,
-      reason: 'day_0_grace_period',
-      suppressedReason: 'New user on Day 0: gently allowing them to explore without reminder pressure.',
-    };
+    // On Day 0, if the user has stepped away and has no recorded events today,
+    // continue to scheduled window evaluation so they receive their reminder on their lock screen.
   }
 
   // 5. First-Use Reminder Check

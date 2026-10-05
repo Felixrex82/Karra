@@ -14,7 +14,16 @@ import {
   NIGHT_TEMPLATES,
   CONTEXTUAL_TEMPLATES,
 } from '../src/engine/notificationEngine';
-import { sendPushToUser } from './webPushService';
+import { sendPushToUser, getSubscribedUserIds } from './webPushService';
+
+export interface UserPresenceRecord {
+  userId: string;
+  userEmail?: string;
+  businessName?: string;
+  lastActiveTimestamp: string;
+  eventsTodayCount?: number;
+  isAway?: boolean;
+}
 
 interface NotificationStoreData {
   notifications: NotificationItem[];
@@ -26,6 +35,7 @@ interface NotificationStoreData {
     evaluatedAt: string;
     decision: NotificationDecision;
   }>;
+  userPresence?: Record<string, UserPresenceRecord>;
 }
 
 const DATA_DIR = process.env.VERCEL
@@ -62,8 +72,20 @@ function loadStore(): NotificationStoreData {
     notifications: [],
     preferences: {},
     evaluationLogs: [],
+    userPresence: {},
   };
   return cachedStore;
+}
+
+export function updateUserPresence(presence: UserPresenceRecord) {
+  const store = loadStore();
+  if (!store.userPresence) store.userPresence = {};
+  store.userPresence[presence.userId] = {
+    ...store.userPresence[presence.userId],
+    ...presence,
+    lastActiveTimestamp: presence.lastActiveTimestamp || new Date().toISOString(),
+  };
+  persistStore();
 }
 
 function persistStore() {
@@ -200,6 +222,7 @@ export function evaluateAndDispatchForUser(context: {
   businessName?: string;
   signupTimestamp?: string;
   lastActiveTimestamp?: string;
+  isUserAway?: boolean;
   eventsToday?: any[];
   lifetimeEventsCount?: number;
   nowIso?: string;
@@ -221,6 +244,7 @@ export function evaluateAndDispatchForUser(context: {
     businessName: context.businessName,
     signupTimestamp: context.signupTimestamp,
     lastActiveTimestamp: context.lastActiveTimestamp,
+    isUserAway: context.isUserAway ?? true,
     preferences: prefs,
     todayDateStr: todayStr,
     eventsToday: context.eventsToday || [],
@@ -371,4 +395,79 @@ export function getNotificationAnalytics() {
     recentDispatches: store.notifications.slice(0, 50),
     recentLogs: store.evaluationLogs.slice(0, 50),
   };
+}
+
+let backgroundWorkerTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Start the background reminder worker that checks reminder windows
+ * for all merchants and dispatches real push notifications even when
+ * the merchant is not currently in the app.
+ */
+export function startBackgroundNotificationWorker() {
+  if (backgroundWorkerTimer) return;
+
+  console.log('[NotificationEngine] Background reminder worker active. Monitoring reminder windows for all merchants...');
+
+  const runEvaluationCycle = async () => {
+    try {
+      const store = loadStore();
+      const subscribedUserIds = getSubscribedUserIds();
+      const presenceUserIds = Object.keys(store.userPresence || {});
+      const preferenceUserIds = Object.keys(store.preferences || {});
+
+      const allUserIds = Array.from(new Set([...subscribedUserIds, ...presenceUserIds, ...preferenceUserIds]));
+
+      for (const userId of allUserIds) {
+        const prefs = getUserNotificationPreferences(userId);
+        if (!prefs.enabled) continue;
+
+        const presence = store.userPresence?.[userId];
+        const lastActiveTimestamp = presence?.lastActiveTimestamp;
+        const eventsTodayCount = presence?.eventsTodayCount || 0;
+        const businessName = presence?.businessName;
+        const userEmail = presence?.userEmail;
+
+        const mockEventsToday = Array.from({ length: eventsTodayCount }, (_, i) => ({
+          id: `ev_${i}`,
+          type: 'SALE',
+          timestamp: lastActiveTimestamp || new Date().toISOString(),
+        }));
+
+        evaluateAndDispatchForUser({
+          userId,
+          userEmail,
+          businessName,
+          lastActiveTimestamp,
+          isUserAway: presence?.isAway !== false,
+          eventsToday: mockEventsToday,
+          lifetimeEventsCount: eventsTodayCount,
+        });
+      }
+    } catch (err: any) {
+      console.warn('[NotificationEngine] Background evaluation warning:', err?.message);
+    }
+  };
+
+  // Run initial check after 8s, then every 60 seconds
+  setTimeout(runEvaluationCycle, 8000);
+  backgroundWorkerTimer = setInterval(runEvaluationCycle, 60 * 1000);
+}
+
+/**
+ * Schedule a delayed push notification (e.g. 5 seconds delay)
+ * so the merchant can switch tabs or lock their phone to verify
+ * that notifications arrive when they are away from the app.
+ */
+export function scheduleDelayedPush(
+  userId: string,
+  delaySeconds: number = 5,
+  type: 'morning' | 'day' | 'night' | 'first_use' = 'night'
+): Promise<NotificationItem> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const item = sendTestNotification(userId, type);
+      resolve(item);
+    }, Math.max(1, delaySeconds) * 1000);
+  });
 }

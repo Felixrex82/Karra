@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/notificationEngine.test.ts && tsx tests/phonePushNotification.test.ts && tsx tests/persistenceRegression.test.ts && tsx tests/nlpExpenseFollowup.test.ts && tsx tests/betaIntelligenceEngine.test.ts && tsx tests/vercelSingleFunctionApi.test.ts"
+    "test": "tsx tests/notificationEngine.test.ts && tsx tests/phonePushNotification.test.ts && tsx tests/persistenceRegression.test.ts && tsx tests/nlpExpenseFollowup.test.ts && tsx tests/betaIntelligenceEngine.test.ts && tsx tests/vercelSingleFunctionApi.test.ts && tsx tests/securityAudit.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

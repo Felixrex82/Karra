@@ -73,6 +73,7 @@ export interface NotificationEvaluationContext {
   businessName?: string;
   signupTimestamp?: string;
   lastActiveTimestamp?: string;
+  isUserAway?: boolean;
   preferences: NotificationPreferences;
   // Activity today
   todayDateStr: string; // YYYY-MM-DD

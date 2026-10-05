@@ -122,22 +122,39 @@ async function runTests() {
   }
   console.log('✅ TEST 4 PASSED: x-now-route-matches header properly routed to /api/health');
 
-  // 5. Admin login with default founder secret (even if no env var set)
-  console.log('\n▶ TEST 5: Admin login with founder key (verifying no 500 error)');
+  // 5a. Admin login when ADMIN_PASSWORD is not set fails safely with 503 (NEVER fallback to hardcoded password)
+  console.log('\n▶ TEST 5a: Admin login when ADMIN_PASSWORD missing fails safely with 503');
   delete process.env.ADMIN_PASSWORD;
   delete process.env.ADMIN_SECRET;
+  const resMissingPass = await makeMockRequest({
+    method: 'POST',
+    url: '/api?__path=admin/login',
+    body: {
+      email: FOUNDER_EMAIL,
+      password: 'some_password',
+    },
+  });
+  if (resMissingPass.status !== 503) {
+    throw new Error(`TEST 5a FAILED: Expected 503 when ADMIN_PASSWORD missing, got ${resMissingPass.status}`);
+  }
+  console.log('✅ TEST 5a PASSED: Admin login safely rejected with 503 when ADMIN_PASSWORD not configured.');
+
+  // 5b. Admin login with configured ADMIN_PASSWORD succeeds
+  console.log('\n▶ TEST 5b: Admin login with configured ADMIN_PASSWORD succeeds');
+  const TEST_PASSWORD = 'ProductionSafeAdminSecret2026!';
+  process.env.ADMIN_PASSWORD = TEST_PASSWORD;
   const resLogin = await makeMockRequest({
     method: 'POST',
     url: '/api?__path=admin/login',
     body: {
       email: FOUNDER_EMAIL,
-      password: '@Felixrex1',
+      password: TEST_PASSWORD,
     },
   });
   if (resLogin.status !== 200 || !resLogin.body?.token) {
-    throw new Error(`TEST 5 FAILED: Expected 200 and token, got ${resLogin.status}: ${JSON.stringify(resLogin.body)}`);
+    throw new Error(`TEST 5b FAILED: Expected 200 and token, got ${resLogin.status}: ${JSON.stringify(resLogin.body)}`);
   }
-  console.log('✅ TEST 5 PASSED: Admin login succeeded without 500 error; token received.');
+  console.log('✅ TEST 5b PASSED: Admin login succeeded with configured ADMIN_PASSWORD; token received.');
 
   // 6. Admin login with wrong password returns 401, NOT 500
   console.log('\n▶ TEST 6: Admin login with invalid password returns 401 (never 500)');
@@ -169,6 +186,21 @@ async function runTests() {
     throw new Error(`TEST 7 FAILED: Expected status 200 and invitations array, got ${res7.status}: ${JSON.stringify(res7.body)}`);
   }
   console.log(`✅ TEST 7 PASSED: Admin invitations retrieved successfully (${res7.body.invitations.length} invitations listed)`);
+
+  // 7b. Tampered/invalid token returns 401 Unauthorized
+  console.log('\n▶ TEST 7b: Tampered admin token access rejected with 401');
+  const res7b = await makeMockRequest({
+    method: 'GET',
+    url: '/api?__path=admin/invitations',
+    headers: {
+      'authorization': 'Bearer invalid_tampered_token_xyz',
+      'x-admin-email': FOUNDER_EMAIL,
+    },
+  });
+  if (res7b.status !== 401) {
+    throw new Error(`TEST 7b FAILED: Expected status 401 for tampered token, got ${res7b.status}`);
+  }
+  console.log('✅ TEST 7b PASSED: Tampered admin token rejected with 401 Unauthorized.');
 
   // 8. Direct POST /api/gemini/interpret route execution with full body
   console.log('\n▶ TEST 8: Direct /api/gemini/interpret endpoint execution');

@@ -605,26 +605,8 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
           }
         }
       } else {
-        // Fallback to deterministic calculated response with multi-turn context
-        const detRes = answerBusinessQuestionWithMemory(q, state, newMessages);
-        answerText = detRes.answer;
-        if (detRes.memoryUpdates) {
-          extractedMemories = detRes.memoryUpdates;
-        }
-        recordedEvents = detRes.createdEvents;
-        recordedEvent = detRes.createdEvent || (detRes.createdEvents && detRes.createdEvents[0]) || undefined;
-        correctedEvent = detRes.correctedEvent;
-        
-        if (detRes.deletedEventId) {
-          const exists = state.events.some((e) => e.id === detRes.deletedEventId && !e.isCorrected);
-          if (exists) {
-            deletedEventId = detRes.deletedEventId;
-          } else {
-            deletedEventId = undefined;
-            answerText = "I couldn't find that transaction to delete in your business records. Your ledger remains unchanged.";
-          }
-        }
-        calendarDate = detRes.targetCalendarDate;
+        // Truthful response when AI service is unavailable or unconfigured - never fabricate business figures
+        answerText = json?.answer || json?.message || json?.error || "I’m temporarily unable to process that request. Please try again.";
       }
 
       // If recorded or corrected event exists, ensure calendar date is populated
@@ -674,26 +656,12 @@ export const ConversationalQuestions: React.FC<ConversationalQuestionsProps> = (
       setMessages(finalMessages);
       onUpdateChatHistory(finalMessages);
     } catch (err) {
-      // Deterministic calculation with conversational context
-      const detRes = answerBusinessQuestionWithMemory(q, state, newMessages);
-      const targetDate = detRes.targetCalendarDate || detRes.createdEvents?.[0]?.date || detRes.createdEvent?.date || detRes.correctedEvent?.date;
-      if (detRes.memoryUpdates?.length || detRes.createdEvent || detRes.createdEvents?.length || detRes.correctedEvent || targetDate || detRes.deletedEventId) {
-        onApplyMemories(detRes.memoryUpdates || [], detRes.createdEvent, detRes.correctedEvent, targetDate, detRes.deletedEventId, detRes.createdEvents);
-      }
-      if (targetDate && onSelectCalendarDate) {
-        onSelectCalendarDate(targetDate);
-      }
-
+      // Truthful error response on network or unexpected failure
       const aiMsg: ChatMessage = {
         id: `ai-${Date.now()}`,
         sender: 'assistant',
-        text: detRes.answer,
+        text: 'I’m temporarily unable to process that request. Please try again.',
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        memorySaved: detRes.memoryUpdates && detRes.memoryUpdates.length > 0 ? detRes.memoryUpdates : undefined,
-        calendarUpdatedDate: targetDate,
-        actionBadge: detRes.correctedEvent ? 'Correction Logged' : detRes.createdEvents && detRes.createdEvents.length > 1 ? `${detRes.createdEvents.length} Sales Logged` : detRes.createdEvent ? 'Event Logged' : undefined,
-        recordedEvent: detRes.createdEvent || detRes.createdEvents?.[0],
-        correctedEvent: detRes.correctedEvent,
       };
 
       const finalMessages = [...newMessages, aiMsg];

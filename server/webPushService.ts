@@ -85,7 +85,7 @@ export function getOrGenerateVapidKeys(): VapidKeys {
   return cachedKeys;
 }
 
-function loadSubscriptions(): PushSubscriptionRecord[] {
+export function loadSubscriptions(): PushSubscriptionRecord[] {
   if (cachedSubscriptions) return cachedSubscriptions;
   ensureDir();
   try {
@@ -97,6 +97,11 @@ function loadSubscriptions(): PushSubscriptionRecord[] {
   } catch {}
   cachedSubscriptions = [];
   return cachedSubscriptions;
+}
+
+export function getSubscribedUserIds(): string[] {
+  const list = loadSubscriptions();
+  return Array.from(new Set(list.map((s) => s.userId)));
 }
 
 function persistSubscriptions() {
