@@ -13,6 +13,7 @@ import {
   ArrowDownRight,
   ArrowUp,
   ArrowDown,
+  Minus,
   Package,
   Users,
   User,
@@ -174,28 +175,39 @@ export const BusinessCalendar: React.FC<BusinessCalendarProps> = ({
     return cells;
   }, [currentYear, currentMonth]);
 
-  // Precalculate daily summaries for current month
+  // Precalculate daily summaries for current month and previous month for true real-time analytics
   const {
     monthSummaries,
     totalMonthSales,
     totalMonthExpenses,
+    totalMonthCOGS,
     totalMonthProfit,
     totalItemsSold,
     distinctCustomersCount,
     profitableDaysCount,
     lossDaysCount,
     breakevenDaysCount,
+    bestDayDate,
+    bestDayProfit,
+    prevMonthSales,
+    prevMonthExpenses,
+    prevMonthProfit,
+    prevMonthItemsSold,
+    prevMonthCustomersCount,
   } = useMemo(() => {
     const daysInMonth = new Date(currentYear, currentMonth + 1, 0).getDate();
     const summaries: Record<string, DailySummary> = {};
     let sales = 0;
     let expenses = 0;
+    let cogs = 0;
     let profit = 0;
     let items = 0;
     const customersSet = new Set<string>();
     let profitable = 0;
     let loss = 0;
     let breakeven = 0;
+    let maxProfit = -Infinity;
+    let maxProfitDay = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`;
 
     for (let d = 1; d <= daysInMonth; d++) {
       const mm = String(currentMonth + 1).padStart(2, '0');
@@ -207,8 +219,14 @@ export const BusinessCalendar: React.FC<BusinessCalendarProps> = ({
       if (sum.eventsCount > 0) {
         sales += sum.sales;
         expenses += sum.expenses;
+        cogs += sum.costOfGoods;
         profit += sum.netOperatingResult;
         items += sum.itemsSoldCount;
+
+        if (sum.netOperatingResult > maxProfit) {
+          maxProfit = sum.netOperatingResult;
+          maxProfitDay = dateStr;
+        }
 
         if (sum.status === 'PROFIT') {
           profitable++;
@@ -220,55 +238,147 @@ export const BusinessCalendar: React.FC<BusinessCalendarProps> = ({
       }
     }
 
-    // Scan events in this month for customers
+    // Scan events in this month for customer names
+    const currentMonthPrefix = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
     events.forEach((ev) => {
-      if (ev.date && ev.date.startsWith(`${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`)) {
+      if (!ev.isCorrected && ev.date && ev.date.startsWith(currentMonthPrefix)) {
         if (ev.customerName) customersSet.add(ev.customerName.trim());
       }
     });
+
+    // Compute Previous Month analytics for true real-time trend comparisons
+    const prevYear = currentMonth === 0 ? currentYear - 1 : currentYear;
+    const prevMonthIdx = currentMonth === 0 ? 11 : currentMonth - 1;
+    const prevMonthPrefix = `${prevYear}-${String(prevMonthIdx + 1).padStart(2, '0')}`;
+
+    let pSales = 0;
+    let pExpenses = 0;
+    let pProfit = 0;
+    let pItems = 0;
+    const prevCustomersSet = new Set<string>();
+
+    events.forEach((ev) => {
+      if (!ev.isCorrected && ev.date && ev.date.startsWith(prevMonthPrefix)) {
+        if (ev.type === 'SALE') {
+          pSales += ev.totalRevenue || 0;
+          pItems += ev.quantity || 1;
+          if (ev.totalCostAtTime) pProfit -= ev.totalCostAtTime;
+        } else if (ev.type === 'EXPENSE' || ev.type === 'PURCHASE_STOCK') {
+          const expAmt = ev.expenseAmount || ev.totalCostAtTime || 0;
+          pExpenses += expAmt;
+          pProfit -= expAmt;
+        } else if (ev.type === 'RETURN_REFUND') {
+          const refAmt = ev.refundAmount || ev.totalRevenue || 0;
+          pSales = Math.max(0, pSales - refAmt);
+        }
+        if (ev.customerName) {
+          prevCustomersSet.add(ev.customerName.trim());
+        }
+      }
+    });
+
+    pProfit += pSales;
 
     return {
       monthSummaries: summaries,
       totalMonthSales: sales,
       totalMonthExpenses: expenses,
+      totalMonthCOGS: cogs,
       totalMonthProfit: profit,
       totalItemsSold: items,
       distinctCustomersCount: customersSet.size,
       profitableDaysCount: profitable,
       lossDaysCount: loss,
       breakevenDaysCount: breakeven,
+      bestDayDate: maxProfit > -Infinity ? maxProfitDay : `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01`,
+      bestDayProfit: maxProfit > -Infinity ? maxProfit : 0,
+      prevMonthSales: pSales,
+      prevMonthExpenses: pExpenses,
+      prevMonthProfit: pProfit,
+      prevMonthItemsSold: pItems,
+      prevMonthCustomersCount: prevCustomersSet.size,
     };
   }, [events, currentYear, currentMonth]);
 
-  // Fallback defaults to match the reference graphic when month is September 2026 or empty
+  // Real-time Trend Calculator helper
+  const computeTrend = (current: number, previous: number) => {
+    if (previous === 0) {
+      if (current > 0) return { percent: 100, formatted: '+100%', direction: 'up' as const };
+      if (current < 0) return { percent: 100, formatted: '-100%', direction: 'down' as const };
+      return { percent: 0, formatted: '0.0%', direction: 'neutral' as const };
+    }
+    const diff = current - previous;
+    const pct = (diff / Math.abs(previous)) * 100;
+    if (pct > 0.05) {
+      return { percent: pct, formatted: `+${pct.toFixed(1)}%`, direction: 'up' as const };
+    }
+    if (pct < -0.05) {
+      return { percent: Math.abs(pct), formatted: `-${Math.abs(pct).toFixed(1)}%`, direction: 'down' as const };
+    }
+    return { percent: 0, formatted: '0.0%', direction: 'neutral' as const };
+  };
+
+  // Real-time Analytical Metrics (Zero dummy values, real-time percentages and directions)
   const displayMetrics = useMemo(() => {
-    const isSep2026 = currentYear === 2026 && currentMonth === 8;
+    const salesTrend = computeTrend(totalMonthSales, prevMonthSales);
+    const expensesTrend = computeTrend(totalMonthExpenses, prevMonthExpenses);
+    const itemsTrend = computeTrend(totalItemsSold, prevMonthItemsSold);
+    const customersTrend = computeTrend(distinctCustomersCount, prevMonthCustomersCount);
+
+    // Net Profit Margin & Profit/Loss state
+    const netProfitMargin = totalMonthSales > 0 ? (totalMonthProfit / totalMonthSales) * 100 : 0;
+    const isNetProfit = totalMonthProfit > 0;
+    const isNetLoss = totalMonthProfit < 0;
+
+    let profitTrendFormatted = '0.0%';
+    let profitDirection: 'up' | 'down' | 'neutral' = 'neutral';
+    if (isNetProfit) {
+      profitTrendFormatted = `+${netProfitMargin.toFixed(1)}%`;
+      profitDirection = 'up';
+    } else if (isNetLoss) {
+      profitTrendFormatted = `-${Math.abs(netProfitMargin).toFixed(1)}%`;
+      profitDirection = 'down';
+    }
+
     return {
-      sales: totalMonthSales > 0 ? totalMonthSales : isSep2026 ? 74000 : totalMonthSales,
-      salesTrend: '+12%',
-      expenses: totalMonthExpenses > 0 ? totalMonthExpenses : isSep2026 ? 45000 : totalMonthExpenses,
-      expensesTrend: '+8%',
-      itemsSold: totalItemsSold > 0 ? totalItemsSold : isSep2026 ? 18 : totalItemsSold,
-      itemsSoldTrend: '+20%',
-      customers: distinctCustomersCount > 0 ? distinctCustomersCount : isSep2026 ? 7 : distinctCustomersCount,
-      customersTrend: '+17%',
-      profitableDays: profitableDaysCount > 0 ? profitableDaysCount : isSep2026 ? 12 : profitableDaysCount,
-      lossDays: lossDaysCount > 0 ? lossDaysCount : isSep2026 ? 4 : lossDaysCount,
-      breakevenDays: breakevenDaysCount > 0 ? breakevenDaysCount : isSep2026 ? 2 : breakevenDaysCount,
+      sales: totalMonthSales,
+      salesTrend: salesTrend.formatted,
+      salesDirection: salesTrend.direction,
+      expenses: totalMonthExpenses,
+      expensesTrend: expensesTrend.formatted,
+      expensesDirection: expensesTrend.direction,
+      profit: totalMonthProfit,
+      isNetProfit,
+      isNetLoss,
+      profitMarginPercent: netProfitMargin,
+      profitTrend: profitTrendFormatted,
+      profitDirection,
+      itemsSold: totalItemsSold,
+      itemsSoldTrend: itemsTrend.formatted,
+      itemsSoldDirection: itemsTrend.direction,
+      customers: distinctCustomersCount,
+      customersTrend: customersTrend.formatted,
+      customersDirection: customersTrend.direction,
+      profitableDays: profitableDaysCount,
+      lossDays: lossDaysCount,
+      breakevenDays: breakevenDaysCount,
     };
   }, [
     totalMonthSales,
+    prevMonthSales,
     totalMonthExpenses,
+    prevMonthExpenses,
+    totalMonthProfit,
     totalItemsSold,
+    prevMonthItemsSold,
     distinctCustomersCount,
+    prevMonthCustomersCount,
     profitableDaysCount,
     lossDaysCount,
     breakevenDaysCount,
-    currentYear,
-    currentMonth,
   ]);
 
-  // Selected Day Summary
+  // Selected Day Summary (Real analytical calculation)
   const selectedDaySummary = useMemo<DailySummary>(() => {
     if (monthSummaries[selectedDate]) {
       return monthSummaries[selectedDate];
@@ -276,32 +386,77 @@ export const BusinessCalendar: React.FC<BusinessCalendarProps> = ({
     return calculateDailySummary(events, selectedDate);
   }, [monthSummaries, selectedDate, events]);
 
-  // Fallback values for selected day matching reference graphic (Wednesday, Sep 3, 2026)
-  const isSelectedDateSep3 = selectedDate === '2026-09-03';
-  const effectiveDaySales = selectedDaySummary.sales > 0
-    ? selectedDaySummary.sales
-    : isSelectedDateSep3
-    ? 85000
-    : 0;
-  const effectiveDayExpenses = selectedDaySummary.expenses > 0
-    ? selectedDaySummary.expenses
-    : isSelectedDateSep3
-    ? 12000
-    : 0;
-  const effectiveDayNetProfit = selectedDaySummary.eventsCount > 0
-    ? selectedDaySummary.netOperatingResult
-    : isSelectedDateSep3
-    ? 73000
-    : 0;
+  // Real Analytical Values for Selected Day
+  const effectiveDaySales = selectedDaySummary.sales;
+  const effectiveDayExpenses = selectedDaySummary.expenses;
+  const effectiveDayNetProfit = selectedDaySummary.netOperatingResult;
 
-  // Determine selected day status
+  // Real analytical values for Week and Month view in Segmented Switcher
+  const activeSegmentData = useMemo(() => {
+    if (activeSegment === 'month') {
+      return {
+        sales: totalMonthSales,
+        expenses: totalMonthExpenses,
+        netProfit: totalMonthProfit,
+        status: totalMonthProfit > 0 ? ('PROFIT' as const) : totalMonthProfit < 0 ? ('LOSS' as const) : ('BREAKEVEN' as const),
+      };
+    }
+    if (activeSegment === 'week') {
+      // 7-day period ending on selectedDate
+      try {
+        const [y, m, d] = selectedDate.split('-').map(Number);
+        const endD = new Date(y, m - 1, d);
+        const startD = new Date(endD);
+        startD.setDate(endD.getDate() - 6);
+
+        let wSales = 0;
+        let wExpenses = 0;
+        let wProfit = 0;
+        let wEvents = 0;
+
+        for (let dt = new Date(startD); dt <= endD; dt.setDate(dt.getDate() + 1)) {
+          const dtStr = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+          const sum = monthSummaries[dtStr] || calculateDailySummary(events, dtStr);
+          if (sum.eventsCount > 0) {
+            wSales += sum.sales;
+            wExpenses += sum.expenses;
+            wProfit += sum.netOperatingResult;
+            wEvents += sum.eventsCount;
+          }
+        }
+
+        return {
+          sales: wSales,
+          expenses: wExpenses,
+          netProfit: wProfit,
+          status: wProfit > 0 ? ('PROFIT' as const) : wProfit < 0 ? ('LOSS' as const) : ('BREAKEVEN' as const),
+        };
+      } catch {
+        return {
+          sales: effectiveDaySales,
+          expenses: effectiveDayExpenses,
+          netProfit: effectiveDayNetProfit,
+          status: selectedDaySummary.status,
+        };
+      }
+    }
+    // Day
+    return {
+      sales: effectiveDaySales,
+      expenses: effectiveDayExpenses,
+      netProfit: effectiveDayNetProfit,
+      status: selectedDaySummary.status,
+    };
+  }, [activeSegment, selectedDate, totalMonthSales, totalMonthExpenses, totalMonthProfit, monthSummaries, events, effectiveDaySales, effectiveDayExpenses, effectiveDayNetProfit, selectedDaySummary]);
+
+  // Determine active segment status
   const effectiveDayStatus = useMemo<'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'EMPTY'>(() => {
-    if (effectiveDayNetProfit > 0) return 'PROFIT';
-    if (effectiveDayNetProfit < 0) return 'LOSS';
-    if (effectiveDaySales > 0 || effectiveDayExpenses > 0) return 'BREAKEVEN';
-    if (selectedDaySummary.eventsCount > 0) return 'BREAKEVEN';
+    if (activeSegment === 'day' && selectedDaySummary.eventsCount === 0) return 'EMPTY';
+    if (activeSegmentData.netProfit > 0) return 'PROFIT';
+    if (activeSegmentData.netProfit < 0) return 'LOSS';
+    if (activeSegmentData.sales > 0 || activeSegmentData.expenses > 0) return 'BREAKEVEN';
     return 'EMPTY';
-  }, [effectiveDayNetProfit, effectiveDaySales, effectiveDayExpenses, selectedDaySummary]);
+  }, [activeSegment, selectedDaySummary.eventsCount, activeSegmentData]);
 
   // Format date helper: "Wednesday, Sep 3, 2026"
   const formattedFullSelectedDate = useMemo(() => {
@@ -385,70 +540,11 @@ export const BusinessCalendar: React.FC<BusinessCalendarProps> = ({
       });
     }
 
-    // Default reference mockup events matching screenshot when Sep 3, 2026 is viewed
-    if (isSelectedDateSep3) {
-      return [
-        {
-          id: 'mock-1',
-          type: 'SALE',
-          title: 'Sale recorded',
-          subtitle: '3 shirts • Customer: Amaka',
-          amountText: '+₦45,000',
-          timeStr: '11:24 AM',
-        },
-        {
-          id: 'mock-2',
-          type: 'EXPENSE',
-          title: 'Expense recorded',
-          subtitle: 'Transport',
-          amountText: '-₦5,000',
-          timeStr: '2:18 PM',
-        },
-        {
-          id: 'mock-3',
-          type: 'STOCK',
-          title: 'Stock updated',
-          subtitle: '5 cartons (Supplier: Musa)',
-          amountText: '-',
-          timeStr: '3:42 PM',
-        },
-        {
-          id: 'mock-4',
-          type: 'CUSTOMER',
-          title: 'Customer added',
-          subtitle: 'Blessing',
-          amountText: '-',
-          timeStr: '4:20 PM',
-        },
-        {
-          id: 'mock-5',
-          type: 'AI',
-          title: 'AI interaction',
-          subtitle: '“How much did I sell today?”',
-          amountText: '-',
-          timeStr: '6:03 PM',
-        },
-      ];
-    }
-
     return [];
-  }, [events, selectedDate, isSelectedDateSep3]);
+  }, [events, selectedDate]);
 
-  // Dot color helper for a calendar day
+  // Dynamic Dot color helper for a calendar day strictly from recorded events
   const getDayDots = (dateStr: string) => {
-    // Exact mapping for September 2026 to mirror reference screenshot
-    if (dateStr === '2026-09-01') return ['blue'];
-    if (dateStr === '2026-09-04') return ['red'];
-    if (dateStr === '2026-09-07') return ['green'];
-    if (dateStr === '2026-09-12') return ['blue'];
-    if (dateStr === '2026-09-15') return ['yellow'];
-    if (dateStr === '2026-09-17') return ['blue'];
-    if (dateStr === '2026-09-21') return ['red'];
-    if (dateStr === '2026-09-24') return ['green'];
-    if (dateStr === '2026-09-28') return ['red', 'yellow'];
-    if (dateStr === '2026-09-29') return ['green'];
-
-    // Dynamic computation from actual recorded events
     const sum = monthSummaries[dateStr];
     if (!sum || sum.eventsCount === 0) return [];
 
@@ -463,26 +559,26 @@ export const BusinessCalendar: React.FC<BusinessCalendarProps> = ({
     return dots;
   };
 
-  // Monthly Card Export Data
+  // Monthly Card Export Data strictly from actual recorded numbers
   const monthCardData: MonthlyCardExportData = {
     year: currentYear,
     month: currentMonth,
     monthName: monthNames[currentMonth],
-    totalSales: displayMetrics.sales,
-    totalCostOfGoods: displayMetrics.sales * 0.55,
-    totalExpenses: displayMetrics.expenses,
-    netProfit: displayMetrics.sales - displayMetrics.expenses,
-    netMarginPercent: displayMetrics.sales > 0 ? ((displayMetrics.sales - displayMetrics.expenses) / displayMetrics.sales) * 100 : 0,
-    cashReceived: displayMetrics.sales,
+    totalSales: totalMonthSales,
+    totalCostOfGoods: totalMonthCOGS,
+    totalExpenses: totalMonthExpenses,
+    netProfit: totalMonthProfit,
+    netMarginPercent: displayMetrics.profitMarginPercent,
+    cashReceived: totalMonthSales,
     creditGiven: 0,
-    profitableDaysCount: displayMetrics.profitableDays,
-    lossDaysCount: displayMetrics.lossDays,
-    breakevenDaysCount: displayMetrics.breakevenDays,
-    bestDay: { date: `${currentYear}-09-03`, profit: 73000 },
-    totalTransactions: displayMetrics.itemsSold,
-    totalItemsSold: displayMetrics.itemsSold,
+    profitableDaysCount: profitableDaysCount,
+    lossDaysCount: lossDaysCount,
+    breakevenDaysCount: breakevenDaysCount,
+    bestDay: { date: bestDayDate, profit: bestDayProfit },
+    totalTransactions: totalItemsSold,
+    totalItemsSold: totalItemsSold,
     monthSummaries,
-    daysInMonth: 30,
+    daysInMonth: new Date(currentYear, currentMonth + 1, 0).getDate(),
   };
 
   return (
@@ -592,27 +688,41 @@ export const BusinessCalendar: React.FC<BusinessCalendarProps> = ({
         </div>
       </div>
 
-      {/* 2. Top 4 Metric Cards Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      {/* 2. Top Metric Cards Row (Real Analytical Data, Real-time Trends & Directional Profit/Loss Arrows) */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 sm:gap-4">
         {/* Card 1: Total Sales */}
         <div className="bg-white dark:bg-[#0F1B2B] rounded-2xl border border-slate-200/90 dark:border-slate-800/80 p-4 sm:p-5 shadow-xs dark:shadow-lg flex flex-col justify-between">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-full bg-[#10B981] text-white flex items-center justify-center font-bold shadow-md shadow-emerald-950/40 shrink-0">
-              <ArrowUpRight className="w-5 h-5 stroke-[2.5]" />
+            <div className={`w-10 h-10 rounded-full text-white flex items-center justify-center font-bold shadow-md shrink-0 ${
+              displayMetrics.salesDirection === 'down' ? 'bg-[#EF4444] shadow-rose-950/40' : 'bg-[#10B981] shadow-emerald-950/40'
+            }`}>
+              {displayMetrics.salesDirection === 'down' ? (
+                <ArrowDownRight className="w-5 h-5 stroke-[2.5]" />
+              ) : (
+                <ArrowUpRight className="w-5 h-5 stroke-[2.5]" />
+              )}
             </div>
-            <div>
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium block">Total Sales</span>
-              <span className="text-base sm:text-xl font-extrabold text-slate-900 dark:text-white tracking-tight mt-0.5 block font-mono">
+            <div className="min-w-0">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium block truncate">Total Sales</span>
+              <span className="text-base sm:text-xl font-extrabold text-slate-900 dark:text-white tracking-tight mt-0.5 block font-mono truncate">
                 {formatNaira(displayMetrics.sales)}
               </span>
             </div>
           </div>
           <div className="mt-3 flex items-center space-x-1.5 text-xs text-slate-500 dark:text-slate-400">
-            <span className="inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
-              <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />
+            <span className={`inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full font-bold text-[11px] ${
+              displayMetrics.salesDirection === 'up'
+                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                : displayMetrics.salesDirection === 'down'
+                ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
+                : 'bg-slate-500/20 text-slate-600 dark:text-slate-400'
+            }`}>
+              {displayMetrics.salesDirection === 'up' && <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />}
+              {displayMetrics.salesDirection === 'down' && <ArrowDown className="w-2.5 h-2.5 stroke-[3]" />}
+              {displayMetrics.salesDirection === 'neutral' && <Minus className="w-2.5 h-2.5 stroke-[3]" />}
               <span>{displayMetrics.salesTrend.replace('+', '')}</span>
             </span>
-            <span className="text-[11px]">vs last 7 days</span>
+            <span className="text-[11px] truncate">vs prev month</span>
           </div>
         </div>
 
@@ -620,65 +730,149 @@ export const BusinessCalendar: React.FC<BusinessCalendarProps> = ({
         <div className="bg-white dark:bg-[#0F1B2B] rounded-2xl border border-slate-200/90 dark:border-slate-800/80 p-4 sm:p-5 shadow-xs dark:shadow-lg flex flex-col justify-between">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-full bg-[#EF4444] text-white flex items-center justify-center font-bold shadow-md shadow-rose-950/40 shrink-0">
-              <ArrowDownRight className="w-5 h-5 stroke-[2.5]" />
+              {displayMetrics.expensesDirection === 'down' ? (
+                <ArrowDownRight className="w-5 h-5 stroke-[2.5]" />
+              ) : (
+                <ArrowUpRight className="w-5 h-5 stroke-[2.5]" />
+              )}
             </div>
-            <div>
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium block">Total Expenses</span>
-              <span className="text-base sm:text-xl font-extrabold text-slate-900 dark:text-white tracking-tight mt-0.5 block font-mono">
+            <div className="min-w-0">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium block truncate">Total Expenses</span>
+              <span className="text-base sm:text-xl font-extrabold text-slate-900 dark:text-white tracking-tight mt-0.5 block font-mono truncate">
                 {formatNaira(displayMetrics.expenses)}
               </span>
             </div>
           </div>
           <div className="mt-3 flex items-center space-x-1.5 text-xs text-slate-500 dark:text-slate-400">
-            <span className="inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-600 dark:text-rose-400 font-bold text-[11px]">
-              <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />
+            <span className={`inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full font-bold text-[11px] ${
+              displayMetrics.expensesDirection === 'down'
+                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                : displayMetrics.expensesDirection === 'up'
+                ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
+                : 'bg-slate-500/20 text-slate-600 dark:text-slate-400'
+            }`}>
+              {displayMetrics.expensesDirection === 'up' && <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />}
+              {displayMetrics.expensesDirection === 'down' && <ArrowDown className="w-2.5 h-2.5 stroke-[3]" />}
+              {displayMetrics.expensesDirection === 'neutral' && <Minus className="w-2.5 h-2.5 stroke-[3]" />}
               <span>{displayMetrics.expensesTrend.replace('+', '')}</span>
             </span>
-            <span className="text-[11px]">vs last 7 days</span>
+            <span className="text-[11px] truncate">vs prev month</span>
           </div>
         </div>
 
-        {/* Card 3: Items Sold */}
+        {/* Card 3: Net Profit / Operating Loss (Directional Arrow & Real-Time Margin Percentage) */}
+        <div className="bg-white dark:bg-[#0F1B2B] rounded-2xl border border-slate-200/90 dark:border-slate-800/80 p-4 sm:p-5 shadow-xs dark:shadow-lg flex flex-col justify-between">
+          <div className="flex items-center space-x-3">
+            <div className={`w-10 h-10 rounded-full text-white flex items-center justify-center font-bold shadow-md shrink-0 ${
+              displayMetrics.profitDirection === 'down'
+                ? 'bg-[#EF4444] shadow-rose-950/40'
+                : displayMetrics.profitDirection === 'up'
+                ? 'bg-[#10B981] shadow-emerald-950/40'
+                : 'bg-slate-500 shadow-slate-950/40'
+            }`}>
+              {displayMetrics.profitDirection === 'down' ? (
+                <TrendingDown className="w-5 h-5 stroke-[2.5]" />
+              ) : displayMetrics.profitDirection === 'up' ? (
+                <TrendingUp className="w-5 h-5 stroke-[2.5]" />
+              ) : (
+                <Receipt className="w-5 h-5" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium block truncate">
+                {displayMetrics.isNetLoss ? 'Operating Loss' : 'Net Profit'}
+              </span>
+              <span className={`text-base sm:text-xl font-extrabold tracking-tight mt-0.5 block font-mono truncate ${
+                displayMetrics.isNetLoss
+                  ? 'text-rose-600 dark:text-rose-400'
+                  : displayMetrics.isNetProfit
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-slate-900 dark:text-white'
+              }`}>
+                {displayMetrics.isNetProfit
+                  ? `+${formatNaira(displayMetrics.profit)}`
+                  : displayMetrics.isNetLoss
+                  ? `-${formatNaira(Math.abs(displayMetrics.profit))}`
+                  : '₦0'}
+              </span>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center space-x-1.5 text-xs text-slate-500 dark:text-slate-400">
+            <span className={`inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full font-bold text-[11px] ${
+              displayMetrics.profitDirection === 'up'
+                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                : displayMetrics.profitDirection === 'down'
+                ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
+                : 'bg-slate-500/20 text-slate-600 dark:text-slate-400'
+            }`}>
+              {displayMetrics.profitDirection === 'up' && <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />}
+              {displayMetrics.profitDirection === 'down' && <ArrowDown className="w-2.5 h-2.5 stroke-[3]" />}
+              {displayMetrics.profitDirection === 'neutral' && <Minus className="w-2.5 h-2.5 stroke-[3]" />}
+              <span>{displayMetrics.profitTrend.replace('+', '')}</span>
+            </span>
+            <span className="text-[11px] truncate">
+              {displayMetrics.isNetLoss ? 'operating loss' : 'net margin'}
+            </span>
+          </div>
+        </div>
+
+        {/* Card 4: Items Sold */}
         <div className="bg-white dark:bg-[#0F1B2B] rounded-2xl border border-slate-200/90 dark:border-slate-800/80 p-4 sm:p-5 shadow-xs dark:shadow-lg flex flex-col justify-between">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-full bg-[#3B82F6] text-white flex items-center justify-center font-bold shadow-md shadow-blue-950/40 shrink-0">
               <Package className="w-5 h-5" />
             </div>
-            <div>
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium block">Items Sold</span>
-              <span className="text-base sm:text-xl font-extrabold text-slate-900 dark:text-white tracking-tight mt-0.5 block font-mono">
+            <div className="min-w-0">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium block truncate">Items Sold</span>
+              <span className="text-base sm:text-xl font-extrabold text-slate-900 dark:text-white tracking-tight mt-0.5 block font-mono truncate">
                 {displayMetrics.itemsSold}
               </span>
             </div>
           </div>
           <div className="mt-3 flex items-center space-x-1.5 text-xs text-slate-500 dark:text-slate-400">
-            <span className="inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
-              <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />
+            <span className={`inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full font-bold text-[11px] ${
+              displayMetrics.itemsSoldDirection === 'up'
+                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                : displayMetrics.itemsSoldDirection === 'down'
+                ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
+                : 'bg-slate-500/20 text-slate-600 dark:text-slate-400'
+            }`}>
+              {displayMetrics.itemsSoldDirection === 'up' && <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />}
+              {displayMetrics.itemsSoldDirection === 'down' && <ArrowDown className="w-2.5 h-2.5 stroke-[3]" />}
+              {displayMetrics.itemsSoldDirection === 'neutral' && <Minus className="w-2.5 h-2.5 stroke-[3]" />}
               <span>{displayMetrics.itemsSoldTrend.replace('+', '')}</span>
             </span>
-            <span className="text-[11px]">vs last 7 days</span>
+            <span className="text-[11px] truncate">vs prev month</span>
           </div>
         </div>
 
-        {/* Card 4: Customers */}
+        {/* Card 5: Customers */}
         <div className="bg-white dark:bg-[#0F1B2B] rounded-2xl border border-slate-200/90 dark:border-slate-800/80 p-4 sm:p-5 shadow-xs dark:shadow-lg flex flex-col justify-between">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-full bg-[#8B5CF6] text-white flex items-center justify-center font-bold shadow-md shadow-purple-950/40 shrink-0">
               <Users className="w-5 h-5" />
             </div>
-            <div>
-              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium block">Customers</span>
-              <span className="text-base sm:text-xl font-extrabold text-slate-900 dark:text-white tracking-tight mt-0.5 block font-mono">
+            <div className="min-w-0">
+              <span className="text-xs text-slate-500 dark:text-slate-400 font-medium block truncate">Customers</span>
+              <span className="text-base sm:text-xl font-extrabold text-slate-900 dark:text-white tracking-tight mt-0.5 block font-mono truncate">
                 {displayMetrics.customers}
               </span>
             </div>
           </div>
           <div className="mt-3 flex items-center space-x-1.5 text-xs text-slate-500 dark:text-slate-400">
-            <span className="inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 font-bold text-[11px]">
-              <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />
+            <span className={`inline-flex items-center space-x-0.5 px-2 py-0.5 rounded-full font-bold text-[11px] ${
+              displayMetrics.customersDirection === 'up'
+                ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+                : displayMetrics.customersDirection === 'down'
+                ? 'bg-rose-500/20 text-rose-600 dark:text-rose-400'
+                : 'bg-slate-500/20 text-slate-600 dark:text-slate-400'
+            }`}>
+              {displayMetrics.customersDirection === 'up' && <ArrowUp className="w-2.5 h-2.5 stroke-[3]" />}
+              {displayMetrics.customersDirection === 'down' && <ArrowDown className="w-2.5 h-2.5 stroke-[3]" />}
+              {displayMetrics.customersDirection === 'neutral' && <Minus className="w-2.5 h-2.5 stroke-[3]" />}
               <span>{displayMetrics.customersTrend.replace('+', '')}</span>
             </span>
-            <span className="text-[11px]">vs last 7 days</span>
+            <span className="text-[11px] truncate">vs prev month</span>
           </div>
         </div>
       </div>
@@ -874,27 +1068,43 @@ export const BusinessCalendar: React.FC<BusinessCalendarProps> = ({
           {/* Nested Selected Date Breakdown Card */}
           <div className="bg-slate-50 dark:bg-[#0B1522] rounded-xl p-3.5 sm:p-4 border border-slate-200 dark:border-slate-800 space-y-2.5">
             <span className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
-              {formattedCardTodayHeader}
+              {activeSegment === 'month'
+                ? `Month Summary (${monthNames[currentMonth]} ${currentYear})`
+                : activeSegment === 'week'
+                ? `Weekly Breakdown (${formattedActivityHeaderDate})`
+                : formattedCardTodayHeader}
             </span>
 
             <div className="flex items-center justify-between text-xs pt-1">
               <span className="text-slate-500 dark:text-slate-400">Sales</span>
               <span className="font-mono font-bold text-slate-900 dark:text-white">
-                {formatNaira(effectiveDaySales)}
+                {formatNaira(activeSegmentData.sales)}
               </span>
             </div>
 
             <div className="flex items-center justify-between text-xs">
               <span className="text-slate-500 dark:text-slate-400">Expenses</span>
               <span className="font-mono font-bold text-slate-900 dark:text-white">
-                {formatNaira(effectiveDayExpenses)}
+                {formatNaira(activeSegmentData.expenses)}
               </span>
             </div>
 
             <div className="flex items-center justify-between text-xs pt-1 border-t border-slate-200 dark:border-slate-800">
-              <span className="text-slate-700 dark:text-slate-300 font-semibold">Net Profit</span>
-              <span className="font-mono font-extrabold text-sm text-emerald-600 dark:text-[#10B981]">
-                {formatNaira(effectiveDayNetProfit)}
+              <span className="text-slate-700 dark:text-slate-300 font-semibold">
+                {activeSegmentData.netProfit >= 0 ? 'Net Profit' : 'Operating Loss'}
+              </span>
+              <span className={`font-mono font-extrabold text-sm ${
+                activeSegmentData.netProfit > 0
+                  ? 'text-emerald-600 dark:text-[#10B981]'
+                  : activeSegmentData.netProfit < 0
+                  ? 'text-rose-600 dark:text-[#EF4444]'
+                  : 'text-slate-700 dark:text-slate-300'
+              }`}>
+                {activeSegmentData.netProfit > 0
+                  ? `+${formatNaira(activeSegmentData.netProfit)}`
+                  : activeSegmentData.netProfit < 0
+                  ? `-${formatNaira(Math.abs(activeSegmentData.netProfit))}`
+                  : '₦0'}
               </span>
             </div>
           </div>
